@@ -1,4 +1,4 @@
-# agentage Vault — Obsidian plugin
+# Agentage Vault Sync — Obsidian plugin
 
 **One vault. Every AI. Owned by you.**
 

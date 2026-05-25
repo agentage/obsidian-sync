@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Repository:** `agentage/obsidian-vault`
 **Default Branch:** `master`
-**Plugin id:** `agentage-vault` · **Display name:** `agentage Vault`
+**Plugin id:** `agentage-vault` · **Display name:** `Agentage Vault Sync`
 
 ## Development Commands
 

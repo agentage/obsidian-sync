@@ -1,5 +1,9 @@
-import { Plugin, PluginSettingTab, Setting, type App } from 'obsidian';
+import { Notice, Plugin, PluginSettingTab, Setting, type App } from 'obsidian';
 import { DEFAULT_SETTINGS, normalizeServerUrl, type AgentageVaultSettings } from './settings';
+
+// Lucide icon id for the left-ribbon button. Ribbon icons are monochrome
+// (theme-tinted); swap for a custom single-color SVG via addIcon() later.
+const RIBBON_ICON = 'refresh-cw';
 
 // NOTE: Obsidian loads the entry plugin class as the module's DEFAULT export.
 // This is the one place we use a default export (platform requirement);
@@ -9,12 +13,19 @@ export default class AgentageVaultPlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadSettings();
+
+    this.addRibbonIcon(
+      RIBBON_ICON,
+      'Agentage Vault Sync',
+      () => new Notice('Agentage Vault Sync: not connected yet')
+    );
+
     this.addSettingTab(new AgentageVaultSettingTab(this.app, this));
-    console.log('[agentage Vault] loaded');
+    console.log('[Agentage Vault Sync] loaded');
   }
 
   onunload(): void {
-    console.log('[agentage Vault] unloaded');
+    console.log('[Agentage Vault Sync] unloaded');
   }
 
   async loadSettings(): Promise<void> {
