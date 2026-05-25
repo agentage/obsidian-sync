@@ -1,0 +1,10 @@
+{
+	"id": "agentage-vault",
+	"name": "agentage Vault",
+	"version": "0.1.0",
+	"minAppVersion": "1.11.4",
+	"description": "Sync your notes to your private agentage cloud so every AI — Claude, ChatGPT, Cursor — shares the same vault. Notes stay as plain Markdown you own. Requires an agentage account; connects to mcp.agentage.io.",
+	"author": "agentage",
+	"authorUrl": "https://agentage.io",
+	"isDesktopOnly": false
+}

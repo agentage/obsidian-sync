@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "module": "ESNext",
+    "target": "ES2024",
+    "lib": ["ES2024", "DOM"],
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noImplicitAny": true,
+    "isolatedModules": true,
+    "importHelpers": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "inlineSourceMap": true,
+    "inlineSources": true
+  },
+  "include": ["src/**/*.ts"]
+}
