@@ -1,12 +1,5 @@
-import { App, Plugin, PluginSettingTab, Setting } from 'obsidian';
-
-interface AgentageVaultSettings {
-  serverUrl: string;
-}
-
-const DEFAULT_SETTINGS: AgentageVaultSettings = {
-  serverUrl: 'https://mcp.agentage.io',
-};
+import { Plugin, PluginSettingTab, Setting, type App } from 'obsidian';
+import { DEFAULT_SETTINGS, normalizeServerUrl, type AgentageVaultSettings } from './settings';
 
 // NOTE: Obsidian loads the entry plugin class as the module's DEFAULT export.
 // This is the one place we use a default export (platform requirement);
@@ -53,7 +46,7 @@ class AgentageVaultSettingTab extends PluginSettingTab {
           .setPlaceholder('https://mcp.agentage.io')
           .setValue(this.plugin.settings.serverUrl)
           .onChange(async (value) => {
-            this.plugin.settings.serverUrl = value.trim();
+            this.plugin.settings.serverUrl = normalizeServerUrl(value);
             await this.plugin.saveSettings();
           })
       );
