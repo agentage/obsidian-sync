@@ -1,18 +1,51 @@
-import tseslint from 'typescript-eslint';
+import typescriptEslint from '@typescript-eslint/eslint-plugin';
+import tsParser from '@typescript-eslint/parser';
+import prettierPlugin from 'eslint-plugin-prettier';
+import prettierConfig from 'eslint-config-prettier';
 
-export default tseslint.config(
+export default [
   {
-    ignores: ['main.js', 'node_modules/**'],
+    ignores: ['main.js', 'coverage/**', 'node_modules/**'],
   },
   {
     files: ['src/**/*.ts'],
-    extends: [...tseslint.configs.recommended],
-    rules: {
-      'prefer-const': 'error',
-      '@typescript-eslint/no-unused-vars': [
-        'warn',
-        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
-      ],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: {
+        ecmaVersion: 2024,
+        sourceType: 'module',
+        project: './tsconfig.json',
+      },
     },
-  }
-);
+    plugins: {
+      '@typescript-eslint': typescriptEslint,
+      prettier: prettierPlugin,
+    },
+    rules: {
+      ...prettierConfig.rules,
+      'prettier/prettier': 'error',
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/consistent-type-imports': [
+        'error',
+        { prefer: 'type-imports', fixStyle: 'inline-type-imports' },
+      ],
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/naming-convention': [
+        'error',
+        {
+          selector: 'interface',
+          format: ['PascalCase'],
+          custom: { regex: '^[A-Z]', match: true },
+        },
+        {
+          selector: 'typeAlias',
+          format: ['PascalCase'],
+        },
+      ],
+      'prefer-const': 'error',
+      'prefer-arrow-callback': 'error',
+      'arrow-body-style': ['error', 'as-needed'],
+      'no-var': 'error',
+    },
+  },
+];
