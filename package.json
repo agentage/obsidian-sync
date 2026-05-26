@@ -1,7 +1,7 @@
 {
-  "name": "obsidian-vault",
+  "name": "obsidian-memory",
   "version": "0.1.0",
-  "description": "agentage Vault — Obsidian plugin. One vault, every AI, owned by you.",
+  "description": "Agentage Memory — Obsidian plugin. One memory, every AI, owned by you.",
   "private": true,
   "type": "module",
   "main": "main.js",

@@ -1,9 +1,9 @@
 {
-	"id": "agentage-vault",
-	"name": "Agentage Vault Sync",
+	"id": "agentage-memory",
+	"name": "Agentage Memory",
 	"version": "0.1.0",
 	"minAppVersion": "1.11.4",
-	"description": "Sync your notes to your private agentage cloud so every AI — Claude, ChatGPT, Cursor — shares the same vault. Notes stay as plain Markdown you own. Requires an agentage account; connects to mcp.agentage.io.",
+	"description": "The shared memory layer for every AI — sync your notes to your private Agentage Memory (per-tenant, EU-hosted) so Claude, ChatGPT, Cursor and any MCP client read and write the same memory. Notes stay as plain Markdown you own. Requires an agentage account; connects to mcp.agentage.io.",
 	"author": "agentage",
 	"authorUrl": "https://agentage.io",
 	"isDesktopOnly": false
