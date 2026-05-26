@@ -35,7 +35,13 @@ npm run couchdb:down    # stop containers
 npm run couchdb:reset   # stop + drop the data volume
 ```
 
-In the plugin settings (Settings → Agentage Memory), set **Server URL** to `http://localhost:5984` and click **Test connection** — you should see *Connected (HTTP 200)*.
+In the plugin settings (Settings → Agentage Memory), set **Server URL** to `http://localhost:5984` (Username `admin`, Password `agentage` defaults match) and click **Test connection** — you should see *Connected (HTTP 200)*.
+
+Then open any note and run **Command Palette → "Push current note to Agentage Memory"**. The note is written as one whole document with `_id = <vault-path>`. Verify on the server:
+
+```bash
+curl -sS -u admin:agentage http://localhost:5984/agentage-memory/_all_docs
+```
 
 ## Privacy & network use
 
