@@ -1,20 +1,31 @@
-import { Plugin, PluginSettingTab, Setting, type App } from 'obsidian';
-import { DEFAULT_SETTINGS, normalizeServerUrl, type AgentageVaultSettings } from './settings';
+import { Notice, Plugin, PluginSettingTab, Setting, type App } from 'obsidian';
+import { DEFAULT_SETTINGS, normalizeServerUrl, type AgentageMemorySettings } from './settings';
+
+// Lucide icon id for the left-ribbon button. Ribbon icons are monochrome
+// (theme-tinted); swap for a custom single-color SVG via addIcon() later.
+const RIBBON_ICON = 'refresh-cw';
 
 // NOTE: Obsidian loads the entry plugin class as the module's DEFAULT export.
 // This is the one place we use a default export (platform requirement);
 // everything else in src/ uses named exports per the project conventions.
-export default class AgentageVaultPlugin extends Plugin {
-  settings: AgentageVaultSettings = DEFAULT_SETTINGS;
+export default class AgentageMemoryPlugin extends Plugin {
+  settings: AgentageMemorySettings = DEFAULT_SETTINGS;
 
   async onload(): Promise<void> {
     await this.loadSettings();
-    this.addSettingTab(new AgentageVaultSettingTab(this.app, this));
-    console.log('[agentage Vault] loaded');
+
+    this.addRibbonIcon(
+      RIBBON_ICON,
+      'Agentage Memory',
+      () => new Notice('Agentage Memory: not connected yet')
+    );
+
+    this.addSettingTab(new AgentageMemorySettingTab(this.app, this));
+    console.log('[Agentage Memory] loaded');
   }
 
   onunload(): void {
-    console.log('[agentage Vault] unloaded');
+    console.log('[Agentage Memory] unloaded');
   }
 
   async loadSettings(): Promise<void> {
@@ -26,10 +37,10 @@ export default class AgentageVaultPlugin extends Plugin {
   }
 }
 
-class AgentageVaultSettingTab extends PluginSettingTab {
-  private readonly plugin: AgentageVaultPlugin;
+class AgentageMemorySettingTab extends PluginSettingTab {
+  private readonly plugin: AgentageMemoryPlugin;
 
-  constructor(app: App, plugin: AgentageVaultPlugin) {
+  constructor(app: App, plugin: AgentageMemoryPlugin) {
     super(app, plugin);
     this.plugin = plugin;
   }
@@ -40,7 +51,7 @@ class AgentageVaultSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Server URL')
-      .setDesc('Your agentage cloud endpoint. Leave the default unless told otherwise.')
+      .setDesc('Your Agentage Memory cloud endpoint. Leave the default unless told otherwise.')
       .addText((text) =>
         text
           .setPlaceholder('https://mcp.agentage.io')

@@ -1,8 +1,8 @@
-export interface AgentageVaultSettings {
+export interface AgentageMemorySettings {
   serverUrl: string;
 }
 
-export const DEFAULT_SETTINGS: AgentageVaultSettings = {
+export const DEFAULT_SETTINGS: AgentageMemorySettings = {
   serverUrl: 'https://mcp.agentage.io',
 };
 
