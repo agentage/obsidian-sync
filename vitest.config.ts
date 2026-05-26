@@ -1,6 +1,15 @@
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  // pouch.ts imports `pouchdb-browser` (which references browser globals like
+  // `self` at module load). For Node-side tests we swap it for `pouchdb`,
+  // the Node combo package — same PouchDB constructor API. Production builds
+  // are not affected; esbuild bundles `pouchdb-browser` for real.
+  resolve: {
+    alias: {
+      'pouchdb-browser': 'pouchdb',
+    },
+  },
   test: {
     include: ['src/**/*.test.ts'],
     coverage: {
