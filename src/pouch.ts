@@ -22,8 +22,9 @@ export interface PushCreds {
 export interface MemoryDoc {
   _id: string;
   _rev?: string;
-  content: string;
-  mtime: number;
+  _deleted?: boolean;
+  content?: string;
+  mtime?: number;
 }
 
 /** Fetch impl that satisfies PouchDB's expected shape. */
@@ -121,39 +122,58 @@ export interface ReplicationHandle {
   cancel(): void;
 }
 
-export interface ReplicationCallbacks {
+/** A normalised view of a PouchDB.Replication.SyncResult batch. */
+export interface SyncChange {
+  direction: 'push' | 'pull';
+  docs: MemoryDoc[];
+  docsWritten: number;
+  docsRead: number;
+}
+
+export interface SyncCallbacks {
   onActive?: () => void;
   onPaused?: (err?: unknown) => void;
-  onChange?: (info: unknown) => void;
+  onChange?: (info: SyncChange) => void;
   onError?: (err: unknown) => void;
 }
 
 /**
- * Start continuous one-way replication local -> remote with retry.
- * Returns a handle whose `cancel()` stops the replication.
+ * Start continuous **two-way** sync (local <-> remote) with retry.
  *
- * Two-way (remote -> local) + applying remote changes to the vault lands in
- * the next PR; for now we only push edits upstream so the echo-loop risk
- * doesn't exist yet.
+ * The change callback fires for each batch; `direction: 'pull'` carries docs
+ * that just arrived from CouchDB and the caller should apply them to the
+ * vault. `direction: 'push'` is informational — those docs were already
+ * upserted locally by the vault watcher.
  */
-export function startContinuousReplication(
+export function startContinuousSync(
   creds: PushCreds,
   fetchImpl: PouchFetch,
-  callbacks?: ReplicationCallbacks
+  callbacks?: SyncCallbacks
 ): ReplicationHandle {
   const local = getLocalDb();
   const remote = getRemoteDb(creds, fetchImpl);
-  const rep = PouchDB.replicate(local, remote, {
+  const sync = PouchDB.sync(local, remote, {
     live: true,
     retry: true,
   });
-  if (callbacks?.onActive) rep.on('active', callbacks.onActive);
-  if (callbacks?.onPaused) rep.on('paused', callbacks.onPaused);
-  if (callbacks?.onChange) rep.on('change', callbacks.onChange);
-  if (callbacks?.onError) rep.on('error', callbacks.onError);
+
+  if (callbacks?.onActive) sync.on('active', callbacks.onActive);
+  if (callbacks?.onPaused) sync.on('paused', callbacks.onPaused);
+  if (callbacks?.onError) sync.on('error', callbacks.onError);
+  if (callbacks?.onChange) {
+    sync.on('change', (info) => {
+      callbacks.onChange?.({
+        direction: info.direction,
+        docs: (info.change.docs ?? []) as MemoryDoc[],
+        docsWritten: info.change.docs_written ?? 0,
+        docsRead: info.change.docs_read ?? 0,
+      });
+    });
+  }
+
   return {
     cancel: () => {
-      rep.cancel();
+      sync.cancel();
     },
   };
 }

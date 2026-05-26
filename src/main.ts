@@ -5,16 +5,21 @@ import {
   destroyLocalDb,
   getLocalDb,
   pushNoteViaPouch,
-  startContinuousReplication,
+  startContinuousSync,
   upsertNote,
+  type MemoryDoc,
   type PouchFetch,
   type PushCreds,
   type ReplicationHandle,
+  type SyncChange,
 } from './pouch';
 
 // Lucide icon id for the left-ribbon button. Ribbon icons are monochrome
 // (theme-tinted); swap for a custom single-color SVG via addIcon() later.
 const RIBBON_ICON = 'refresh-cw';
+
+/** How long an echo suppression entry stays valid before being garbage-collected. */
+const ECHO_SUPPRESS_MS = 5_000;
 
 /** Extract useful fields from a PouchDB/fetch error so logs are not just `n`. */
 function describeErr(err: unknown): Record<string, unknown> | string {
@@ -47,11 +52,12 @@ function headersToObject(h: HeadersInit | undefined | null): Record<string, stri
 
 /**
  * Wrap Obsidian's `requestUrl` to look like the browser `fetch` API and inject
- * Basic auth on every request. We bake auth here (rather than via PouchDB's
- * constructor `auth` option) because the `auth` option does not propagate to
- * the live replication `_changes` feed in PouchDB 7+.
+ * Basic auth + JSON Content-Type on every request.
  *
- * `requestUrl` bypasses CORS for us by running in the Electron main process.
+ * Auth must be baked in here (rather than via PouchDB's `auth` constructor
+ * option) because that option does not propagate to the live replication
+ * `_changes` feed in PouchDB 7+. CouchDB also rejects bodied requests without
+ * an explicit `Content-Type: application/json` (415 `bad_content_type`).
  */
 function obsidianFetchForPouch(creds: PushCreds): PouchFetch {
   const authHeader = 'Basic ' + btoa(`${creds.username}:${creds.password}`);
@@ -63,9 +69,6 @@ function obsidianFetchForPouch(creds: PushCreds): PouchFetch {
       ...headersToObject(init?.headers),
       Authorization: authHeader,
     };
-    // CouchDB rejects bodied requests without an explicit JSON Content-Type
-    // (HTTP 415 'bad_content_type'). PouchDB usually sets this, but the
-    // header survives only if we extract it as a plain object first.
     if (body && !Object.keys(headers).some((k) => k.toLowerCase() === 'content-type')) {
       headers['Content-Type'] = 'application/json';
     }
@@ -81,6 +84,8 @@ export default class AgentageMemoryPlugin extends Plugin {
   settings: AgentageMemorySettings = DEFAULT_SETTINGS;
   private replication: ReplicationHandle | null = null;
   private statusBar: HTMLElement | null = null;
+  /** Paths we just wrote *from sync*; the matching vault event must be ignored. */
+  private echoSuppress = new Map<string, number>();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -113,7 +118,6 @@ export default class AgentageMemoryPlugin extends Plugin {
 
   async onunload(): Promise<void> {
     this.stopReplication();
-    // Free the local IndexedDB handle so a quick disable/enable cycle doesn't leak it.
     await destroyLocalDb().catch((err) => console.warn('[Agentage Memory] destroyLocalDb', err));
     console.log('[Agentage Memory] unloaded');
   }
@@ -145,7 +149,20 @@ export default class AgentageMemoryPlugin extends Plugin {
     this.statusBar.setText(label);
   }
 
-  /** Auto-push on every vault edit. Live replication handles the upstream push. */
+  // ---- echo-loop guard --------------------------------------------------
+  private markEchoSuppress(path: string): void {
+    this.echoSuppress.set(path, Date.now());
+  }
+
+  /** Returns true (and consumes the entry) if this vault event was triggered by us. */
+  private consumeEchoSuppress(path: string): boolean {
+    const ts = this.echoSuppress.get(path);
+    if (ts == null) return false;
+    this.echoSuppress.delete(path);
+    return Date.now() - ts < ECHO_SUPPRESS_MS;
+  }
+
+  // ---- vault → cloud ---------------------------------------------------
   private registerVaultEvents(): void {
     this.registerEvent(
       this.app.vault.on('modify', (file) => {
@@ -164,6 +181,7 @@ export default class AgentageMemoryPlugin extends Plugin {
   }
 
   private async onVaultNoteChanged(file: TFile): Promise<void> {
+    if (this.consumeEchoSuppress(file.path)) return;
     try {
       const content = await this.app.vault.read(file);
       await upsertNote(getLocalDb(), file.path, content, file.stat.mtime);
@@ -172,31 +190,70 @@ export default class AgentageMemoryPlugin extends Plugin {
     }
   }
 
+  // ---- cloud → vault ---------------------------------------------------
+  private async applyDocToVault(doc: MemoryDoc): Promise<void> {
+    const path = doc._id;
+    if (!path) return;
+    const existing = this.app.vault.getAbstractFileByPath(path);
+
+    if (doc._deleted) {
+      if (existing instanceof TFile) {
+        this.markEchoSuppress(path);
+        // Safe delete: route to system trash, not a hard wipe.
+        await this.app.vault.trash(existing, true);
+      }
+      return;
+    }
+
+    const content = doc.content ?? '';
+    if (existing instanceof TFile) {
+      const current = await this.app.vault.read(existing);
+      if (current === content) return; // no-op; nothing to write, no echo to emit.
+      this.markEchoSuppress(path);
+      await this.app.vault.modify(existing, content);
+      return;
+    }
+
+    // Create — ensure parent folder exists first.
+    const parent = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+    if (parent && !this.app.vault.getAbstractFileByPath(parent)) {
+      await this.app.vault.createFolder(parent).catch(() => {});
+    }
+    this.markEchoSuppress(path);
+    await this.app.vault.create(path, content);
+  }
+
+  // ---- replication lifecycle ------------------------------------------
   startReplication(): void {
     this.stopReplication();
     try {
-      this.replication = startContinuousReplication(
-        this.creds(),
-        obsidianFetchForPouch(this.creds()),
-        {
-          onActive: () => this.setStatus('active'),
-          onPaused: (err) => {
-            // PouchDB emits `paused` BOTH on a healthy idle ("in sync, waiting for
-            // changes") AND on a transient hiccup that retry:true is about to
-            // recover from. Treat both as "in sync" — only `onError` (below) is
-            // a terminal failure that warrants the error indicator.
-            if (err) {
-              console.warn('[Agentage Memory] paused with transient error:', describeErr(err));
+      this.replication = startContinuousSync(this.creds(), obsidianFetchForPouch(this.creds()), {
+        onActive: () => this.setStatus('active'),
+        onPaused: (err) => {
+          if (err) {
+            console.warn('[Agentage Memory] paused with transient error:', describeErr(err));
+          }
+          this.setStatus('synced');
+        },
+        onChange: (info: SyncChange) => {
+          console.log(
+            '[Agentage Memory] sync',
+            info.direction,
+            `read=${info.docsRead} written=${info.docsWritten}`
+          );
+          if (info.direction === 'pull') {
+            for (const doc of info.docs) {
+              void this.applyDocToVault(doc).catch((err) =>
+                console.error('[Agentage Memory] applyDocToVault failed', doc._id, err)
+              );
             }
-            this.setStatus('synced');
-          },
-          onChange: (info) => console.log('[Agentage Memory] replicated batch', info),
-          onError: (err) => {
-            console.error('[Agentage Memory] replication terminated:', describeErr(err));
-            this.setStatus('error');
-          },
-        }
-      );
+          }
+        },
+        onError: (err) => {
+          console.error('[Agentage Memory] replication terminated:', describeErr(err));
+          this.setStatus('error');
+        },
+      });
     } catch (err) {
       console.error('[Agentage Memory] startReplication failed:', describeErr(err));
       this.setStatus('error');
