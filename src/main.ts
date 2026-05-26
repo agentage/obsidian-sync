@@ -1,5 +1,6 @@
-import { Notice, Plugin, PluginSettingTab, Setting, type App } from 'obsidian';
+import { Notice, Plugin, PluginSettingTab, Setting, requestUrl, type App } from 'obsidian';
 import { DEFAULT_SETTINGS, normalizeServerUrl, type AgentageMemorySettings } from './settings';
+import { pingServer } from './connection';
 
 // Lucide icon id for the left-ribbon button. Ribbon icons are monochrome
 // (theme-tinted); swap for a custom single-color SVG via addIcon() later.
@@ -60,6 +61,25 @@ class AgentageMemorySettingTab extends PluginSettingTab {
             this.plugin.settings.serverUrl = normalizeServerUrl(value);
             await this.plugin.saveSettings();
           })
+      );
+
+    new Setting(containerEl)
+      .setName('Test connection')
+      .setDesc('Ping the server URL to confirm it is reachable.')
+      .addButton((btn) =>
+        btn.setButtonText('Test').onClick(async () => {
+          btn.setDisabled(true).setButtonText('Testing…');
+          const r = await pingServer(this.plugin.settings.serverUrl, async (u) => {
+            const res = await requestUrl({ url: u, method: 'GET', throw: false });
+            return { status: res.status };
+          });
+          btn.setDisabled(false).setButtonText('Test');
+          new Notice(
+            r.ok
+              ? `Connected (HTTP ${r.status})`
+              : `Failed: ${r.error ?? `HTTP ${r.status ?? '?'}`}`
+          );
+        })
       );
   }
 }

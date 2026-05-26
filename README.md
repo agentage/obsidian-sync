@@ -15,14 +15,27 @@ Sync your Obsidian notes to your private [Agentage Memory](https://agentage.io) 
 ## Develop
 
 ```bash
-npm install      # install dependencies
-npm run dev      # watch + rebuild on change
-npm run build    # type-check + production bundle (main.js)
+npm install        # install dependencies
+npm run dev        # watch + rebuild on change
+npm run build      # production bundle (main.js)
+npm run verify     # full gate: type-check + lint + format + test + build
 ```
 
 To test in Obsidian, symlink or copy this folder to
 `<your-vault>/.obsidian/plugins/agentage-memory/` (needs `main.js`, `manifest.json`, `styles.css`),
 then enable **Agentage Memory** under Settings → Community plugins.
+
+### Local CouchDB (for sync development)
+
+A throwaway local CouchDB (with CORS pre-configured for Obsidian) is provided via Docker Compose:
+
+```bash
+npm run couchdb:up      # start CouchDB on http://localhost:5984 (admin / agentage)
+npm run couchdb:down    # stop containers
+npm run couchdb:reset   # stop + drop the data volume
+```
+
+In the plugin settings (Settings → Agentage Memory), set **Server URL** to `http://localhost:5984` and click **Test connection** — you should see *Connected (HTTP 200)*.
 
 ## Privacy & network use
 

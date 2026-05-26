@@ -21,6 +21,9 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "clean": "rm -rf main.js *.map coverage",
+    "couchdb:up": "docker compose up -d",
+    "couchdb:down": "docker compose down",
+    "couchdb:reset": "docker compose down -v",
     "version": "node version-bump.mjs && git add manifest.json versions.json",
     "verify": "npm run type-check && npm run lint && npm run format:check && npm run test && npm run build"
   },
