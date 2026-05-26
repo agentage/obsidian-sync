@@ -1,23 +1,31 @@
 import { Notice, Plugin, PluginSettingTab, Setting, requestUrl, type App } from 'obsidian';
 import { DEFAULT_SETTINGS, normalizeServerUrl, type AgentageMemorySettings } from './settings';
 import { pingServer } from './connection';
-import { ensureDatabase, pushNote, type FetchInit, type FetchLike, type SyncCreds } from './sync';
+import { destroyLocalDb, pushNoteViaPouch, type PouchFetch, type PushCreds } from './pouch';
 
 // Lucide icon id for the left-ribbon button. Ribbon icons are monochrome
 // (theme-tinted); swap for a custom single-color SVG via addIcon() later.
 const RIBBON_ICON = 'refresh-cw';
 
-/** Wrap Obsidian's `requestUrl` to satisfy the `FetchLike` shape used by sync.ts. */
-function obsidianFetch(): FetchLike {
-  return async (url, init?: FetchInit) => {
+/**
+ * Wrap Obsidian's `requestUrl` to look like the browser `fetch` API.
+ * PouchDB calls fetch(url, init) and expects a real Response back; Obsidian's
+ * requestUrl bypasses CORS for us by running in the Electron main process.
+ */
+function obsidianFetchForPouch(): PouchFetch {
+  return async (input, init) => {
+    const url = typeof input === 'string' ? input : input.toString();
     const res = await requestUrl({
       url,
       method: init?.method ?? 'GET',
-      headers: init?.headers,
-      body: init?.body,
+      headers: (init?.headers as Record<string, string>) ?? undefined,
+      body: (init?.body as string) ?? undefined,
       throw: false,
     });
-    return { status: res.status, text: res.text };
+    return new Response(res.text, {
+      status: res.status,
+      headers: res.headers,
+    });
   };
 }
 
@@ -48,7 +56,9 @@ export default class AgentageMemoryPlugin extends Plugin {
     console.log('[Agentage Memory] loaded');
   }
 
-  onunload(): void {
+  async onunload(): Promise<void> {
+    // Free the local IndexedDB handle so a quick disable/enable cycle doesn't leak it.
+    await destroyLocalDb().catch((err) => console.warn('[Agentage Memory] destroyLocalDb', err));
     console.log('[Agentage Memory] unloaded');
   }
 
@@ -60,7 +70,7 @@ export default class AgentageMemoryPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
-  private creds(): SyncCreds {
+  private creds(): PushCreds {
     return {
       serverUrl: this.settings.serverUrl,
       username: this.settings.username,
@@ -79,10 +89,14 @@ export default class AgentageMemoryPlugin extends Plugin {
       return;
     }
     const content = await this.app.vault.read(file);
-    const fetch = obsidianFetch();
     try {
-      await ensureDatabase(this.creds(), fetch);
-      const { id, rev } = await pushNote(this.creds(), file.path, content, file.stat.mtime, fetch);
+      const { id, rev } = await pushNoteViaPouch(
+        this.creds(),
+        file.path,
+        content,
+        file.stat.mtime,
+        obsidianFetchForPouch()
+      );
       const shortRev = rev.split('-')[0];
       new Notice(`Pushed: ${id} (rev ${shortRev})`);
     } catch (err) {
