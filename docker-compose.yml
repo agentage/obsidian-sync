@@ -20,6 +20,9 @@ services:
   # Configure CORS so the plugin (running inside Obsidian) can talk to CouchDB
   # directly via requestUrl. Origins: app://obsidian.md (desktop),
   # capacitor://localhost (mobile WebView), http://localhost (dev tools).
+  #
+  # NOTE: command is a YAML array so Compose passes the script as a single arg
+  # to `/bin/sh -c` (Compose v5 rejects a multi-line `command: |` string here).
   couchdb-init:
     image: curlimages/curl:8.11.0
     container_name: agentage-memory-couchdb-init
@@ -27,17 +30,18 @@ services:
       couchdb:
         condition: service_healthy
     restart: "no"
-    entrypoint: ["/bin/sh", "-c"]
-    command: |
-      set -eu
-      A="http://admin:agentage@couchdb:5984"
-      put() { curl -fsS -X PUT "$$A/_node/_local/_config/$$1" -H 'Content-Type: application/json' -d "\"$$2\"" >/dev/null; }
-      put httpd/enable_cors true
-      put cors/origins "app://obsidian.md,capacitor://localhost,http://localhost"
-      put cors/credentials true
-      put cors/methods "GET,PUT,POST,HEAD,DELETE"
-      put cors/headers "accept, authorization, content-type, origin, referer"
-      echo "[init] CORS configured for app://obsidian.md, capacitor://localhost, http://localhost"
+    entrypoint: ["/bin/sh"]
+    command:
+      - "-c"
+      - |
+        set -eu
+        A=http://admin:agentage@couchdb:5984
+        curl -fsS -X PUT "$$A/_node/_local/_config/httpd/enable_cors" -H 'Content-Type: application/json' -d '"true"' >/dev/null
+        curl -fsS -X PUT "$$A/_node/_local/_config/cors/origins" -H 'Content-Type: application/json' -d '"app://obsidian.md,capacitor://localhost,http://localhost"' >/dev/null
+        curl -fsS -X PUT "$$A/_node/_local/_config/cors/credentials" -H 'Content-Type: application/json' -d '"true"' >/dev/null
+        curl -fsS -X PUT "$$A/_node/_local/_config/cors/methods" -H 'Content-Type: application/json' -d '"GET,PUT,POST,HEAD,DELETE"' >/dev/null
+        curl -fsS -X PUT "$$A/_node/_local/_config/cors/headers" -H 'Content-Type: application/json' -d '"accept, authorization, content-type, origin, referer"' >/dev/null
+        echo "[init] CORS configured for app://obsidian.md, capacitor://localhost, http://localhost"
 
 volumes:
   couchdb-data:
