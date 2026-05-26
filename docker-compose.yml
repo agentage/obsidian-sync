@@ -1,0 +1,43 @@
+services:
+  couchdb:
+    image: couchdb:3.4
+    container_name: agentage-memory-couchdb
+    restart: unless-stopped
+    environment:
+      COUCHDB_USER: admin
+      COUCHDB_PASSWORD: agentage
+    ports:
+      - "5984:5984"
+    volumes:
+      - couchdb-data:/opt/couchdb/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:5984/_up || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # Configure CORS so the plugin (running inside Obsidian) can talk to CouchDB
+  # directly via requestUrl. Origins: app://obsidian.md (desktop),
+  # capacitor://localhost (mobile WebView), http://localhost (dev tools).
+  couchdb-init:
+    image: curlimages/curl:8.11.0
+    container_name: agentage-memory-couchdb-init
+    depends_on:
+      couchdb:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      set -eu
+      A="http://admin:agentage@couchdb:5984"
+      put() { curl -fsS -X PUT "$$A/_node/_local/_config/$$1" -H 'Content-Type: application/json' -d "\"$$2\"" >/dev/null; }
+      put httpd/enable_cors true
+      put cors/origins "app://obsidian.md,capacitor://localhost,http://localhost"
+      put cors/credentials true
+      put cors/methods "GET,PUT,POST,HEAD,DELETE"
+      put cors/headers "accept, authorization, content-type, origin, referer"
+      echo "[init] CORS configured for app://obsidian.md, capacitor://localhost, http://localhost"
+
+volumes:
+  couchdb-data:
