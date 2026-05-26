@@ -51,10 +51,17 @@ function remoteUrl(creds: PushCreds): string {
   return `${creds.serverUrl.replace(/\/+$/, '')}/${DB_NAME}`;
 }
 
-/** Construct a remote PouchDB pointing at the CouchDB database. */
+/**
+ * Construct a remote PouchDB pointing at the CouchDB database.
+ *
+ * Note: we intentionally do NOT use PouchDB's `auth: {username, password}`
+ * constructor option. In PouchDB 7+ that option only propagates to direct
+ * document operations — the live replication `_changes` feed bypasses it
+ * and returns 401. Auth must be baked into `fetchImpl` (see
+ * `obsidianFetchForPouch` in main.ts), which fires on every request type.
+ */
 export function getRemoteDb(creds: PushCreds, fetchImpl: PouchFetch): PouchDB.Database<MemoryDoc> {
   return new PouchDB<MemoryDoc>(remoteUrl(creds), {
-    auth: { username: creds.username, password: creds.password },
     fetch: fetchImpl,
   });
 }
@@ -108,4 +115,45 @@ export async function pushNoteViaPouch(
   });
 
   return result;
+}
+
+export interface ReplicationHandle {
+  cancel(): void;
+}
+
+export interface ReplicationCallbacks {
+  onActive?: () => void;
+  onPaused?: (err?: unknown) => void;
+  onChange?: (info: unknown) => void;
+  onError?: (err: unknown) => void;
+}
+
+/**
+ * Start continuous one-way replication local -> remote with retry.
+ * Returns a handle whose `cancel()` stops the replication.
+ *
+ * Two-way (remote -> local) + applying remote changes to the vault lands in
+ * the next PR; for now we only push edits upstream so the echo-loop risk
+ * doesn't exist yet.
+ */
+export function startContinuousReplication(
+  creds: PushCreds,
+  fetchImpl: PouchFetch,
+  callbacks?: ReplicationCallbacks
+): ReplicationHandle {
+  const local = getLocalDb();
+  const remote = getRemoteDb(creds, fetchImpl);
+  const rep = PouchDB.replicate(local, remote, {
+    live: true,
+    retry: true,
+  });
+  if (callbacks?.onActive) rep.on('active', callbacks.onActive);
+  if (callbacks?.onPaused) rep.on('paused', callbacks.onPaused);
+  if (callbacks?.onChange) rep.on('change', callbacks.onChange);
+  if (callbacks?.onError) rep.on('error', callbacks.onError);
+  return {
+    cancel: () => {
+      rep.cancel();
+    },
+  };
 }
