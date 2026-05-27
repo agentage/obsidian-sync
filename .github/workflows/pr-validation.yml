@@ -58,18 +58,32 @@ jobs:
         if: always() && steps.install.outcome == 'success'
         run: npm run build
 
-      - name: Install Obsidian + xvfb for E2E
+      - name: Install Obsidian + Xvfb + window manager for E2E
         id: e2e-setup
         if: always() && steps.build.outcome == 'success'
+        # herbstluftwm + dzen2 + x11-xserver-utils: Playwright's `_electron.launch`
+        # against Obsidian on Ubuntu 24.04 hangs at `firstWindow()` without a real
+        # window manager. Pattern proven by `wdio-obsidian-service` CI.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends xvfb jq
+          sudo apt-get install -y --no-install-recommends \
+            xvfb herbstluftwm dzen2 x11-xserver-utils jq
           OBSIDIAN_VERSION=$(curl -fsSL https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest | jq -r .tag_name | sed 's/^v//')
           echo "Obsidian version: $OBSIDIAN_VERSION"
           curl -fsSL -o /tmp/obsidian.deb \
             "https://github.com/obsidianmd/obsidian-releases/releases/download/v${OBSIDIAN_VERSION}/obsidian_${OBSIDIAN_VERSION}_amd64.deb"
           sudo apt-get install -y --no-install-recommends /tmp/obsidian.deb
           ls -la /opt/Obsidian/
+
+      - name: Start Xvfb + window manager
+        id: display
+        if: always() && steps.e2e-setup.outcome == 'success'
+        run: |
+          Xvfb :99 -screen 0 1280x1024x24 +extension GLX +extension RANDR -noreset &
+          sleep 1
+          DISPLAY=:99 herbstluftwm &
+          sleep 1
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
 
       - name: Pre-configure Obsidian (test vault, plugin symlink, vault registry)
         id: e2e-vault
@@ -106,8 +120,7 @@ jobs:
         run: |
           set +e
           echo "::group::Obsidian launch (25s timeout, with vault configured)"
-          timeout 25s xvfb-run -a --server-args="-screen 0 1280x720x24 +extension RANDR" \
-            /opt/Obsidian/obsidian \
+          timeout 25s /opt/Obsidian/obsidian \
             --no-sandbox --disable-gpu --disable-software-rasterizer --disable-dev-shm-usage \
             2>&1 | head -300
           EXIT=$?
@@ -119,7 +132,7 @@ jobs:
         if: always() && steps.e2e-vault.outcome == 'success'
         env:
           OBSIDIAN_BIN: /opt/Obsidian/obsidian
-        run: xvfb-run -a --server-args="-screen 0 1280x720x24 +extension RANDR" npm run test:e2e
+        run: npm run test:e2e
 
       - name: Upload E2E artifacts
         if: always() && steps.e2e.outcome != 'skipped'
@@ -146,6 +159,7 @@ jobs:
               { name: 'Tests + coverage passed', outcome: '${{ steps.test.outcome }}' },
               { name: 'Build successful', outcome: '${{ steps.build.outcome }}' },
               { name: 'Obsidian installed for E2E', outcome: '${{ steps.e2e-setup.outcome }}' },
+              { name: 'Xvfb + window manager started', outcome: '${{ steps.display.outcome }}' },
               { name: 'Test vault + plugin symlink ready', outcome: '${{ steps.e2e-vault.outcome }}' },
               { name: 'E2E smoke tests passed', outcome: '${{ steps.e2e.outcome }}' },
             ];
