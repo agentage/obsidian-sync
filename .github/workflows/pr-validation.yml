@@ -129,15 +129,21 @@ jobs:
       - name: Diagnostic — Obsidian launch with vault configured
         if: always() && steps.e2e-vault.outcome == 'success'
         continue-on-error: true
+        env:
+          ELECTRON_ENABLE_LOGGING: '1'
+          ELECTRON_ENABLE_STACK_DUMPING: '1'
         run: |
           set +e
-          echo "::group::Obsidian launch (25s timeout, with vault configured)"
+          echo "::group::Obsidian launch (25s timeout, verbose Electron, no --disable-gpu)"
           timeout 25s /opt/Obsidian/obsidian \
-            --no-sandbox --disable-gpu --disable-software-rasterizer --disable-dev-shm-usage \
-            2>&1 | head -300
+            --no-sandbox --disable-dev-shm-usage \
+            2>&1 | head -400
           EXIT=$?
           echo "::endgroup::"
-          echo "Obsidian exit code: $EXIT  (124/143 = killed by timeout = ran ok; other = died early)"
+          echo "Obsidian exit code: $EXIT  (124/143 = killed by timeout = ran ok; 0 = quit cleanly)"
+          echo "::group::Window list at end of run (xdotool)"
+          DISPLAY=:99 xdotool search --name '.*' getwindowname %@ 2>&1 || echo "no windows found / xdotool missing"
+          echo "::endgroup::"
 
       - name: E2E smoke tests
         id: e2e
