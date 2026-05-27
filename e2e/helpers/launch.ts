@@ -1,4 +1,5 @@
-import { _electron, type ElectronApplication } from '@playwright/test';
+import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
 const CANDIDATE_PATHS = [
@@ -28,35 +29,91 @@ export function findObsidianBinary(): string {
 }
 
 export interface LaunchOptions {
-  /** Vault path to pass as positional arg. Falls back to `OBSIDIAN_VAULT` env. */
   vault?: string;
-  /** Cap how long `_electron.launch` waits before failing. */
   timeoutMs?: number;
+  /** Port for chrome devtools. 0 = auto-allocate. */
+  cdpPort?: number;
 }
 
-export async function launchObsidian(opts: LaunchOptions = {}): Promise<ElectronApplication> {
+export interface ObsidianHandle {
+  browser: Browser;
+  context: BrowserContext;
+  proc: ChildProcess;
+  /** First non-empty page Obsidian opens (vault main window). */
+  firstWindow(timeoutMs?: number): Promise<Page>;
+  close(): Promise<void>;
+}
+
+// Playwright's `_electron.launch` waits for BOTH the node inspector (`--inspect=0`)
+// and chrome devtools (`--remote-debugging-port=0`) to be reachable before it
+// resolves. Obsidian's asar loader does not enable the node inspector — only
+// chrome devtools comes up — so `_electron.launch` hangs until its timeout.
+// Spawn the binary directly and connect via `chromium.connectOverCDP` instead.
+export async function launchObsidian(opts: LaunchOptions = {}): Promise<ObsidianHandle> {
   const vault = opts.vault ?? process.env.OBSIDIAN_VAULT;
+  const cdpPort = opts.cdpPort ?? 0;
   const args: string[] = [];
   if (vault) args.push(vault);
-  // Xvfb has no dri3 — the GPU process crashes and takes the renderer with
-  // it, so Playwright's `firstWindow()` never resolves. Force the software
-  // path with --disable-gpu + --disable-software-rasterizer + --use-gl=swiftshader.
   args.push(
     '--no-sandbox',
     '--disable-dev-shm-usage',
     '--disable-gpu',
     '--disable-software-rasterizer',
-    '--use-gl=swiftshader'
+    '--use-gl=swiftshader',
+    `--remote-debugging-port=${cdpPort}`,
+    '--remote-allow-origins=*'
   );
 
-  const app = await _electron.launch({
-    executablePath: findObsidianBinary(),
-    args,
-    timeout: opts.timeoutMs ?? 90_000,
+  const proc = spawn(findObsidianBinary(), args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  proc.stdout.on('data', (d: Buffer) => process.stdout.write(`[obsidian] ${d}`));
+
+  const wsUrl = await new Promise<string>((resolve, reject) => {
+    const onExit = (code: number | null) => reject(new Error(`Obsidian exited (code=${code}) before DevTools came up`));
+    proc.once('exit', onExit);
+
+    const onTimeout = setTimeout(() => {
+      proc.off('exit', onExit);
+      reject(new Error(`Timed out waiting for Obsidian DevTools URL (${opts.timeoutMs ?? 60_000}ms)`));
+    }, opts.timeoutMs ?? 60_000);
+
+    proc.stderr.on('data', (chunk: Buffer) => {
+      const text = chunk.toString();
+      process.stderr.write(`[obsidian!] ${text}`);
+      const m = /DevTools listening on (ws:\/\/\S+)/.exec(text);
+      if (m) {
+        clearTimeout(onTimeout);
+        proc.off('exit', onExit);
+        resolve(m[1]);
+      }
+    });
   });
 
-  const proc = app.process();
-  proc.stdout?.on('data', (d: Buffer) => process.stdout.write(`[obsidian] ${d}`));
-  proc.stderr?.on('data', (d: Buffer) => process.stderr.write(`[obsidian!] ${d}`));
-  return app;
+  const browser = await chromium.connectOverCDP(wsUrl);
+  const context = browser.contexts()[0] ?? (await browser.newContext());
+
+  const firstWindow = async (timeoutMs = 60_000): Promise<Page> => {
+    const existing = context.pages().find((p) => p.url() !== 'about:blank' && p.url() !== '');
+    if (existing) return existing;
+    return new Promise<Page>((resolve, reject) => {
+      const t = setTimeout(
+        () => reject(new Error(`No Obsidian window in ${timeoutMs}ms`)),
+        timeoutMs
+      );
+      context.once('page', (page) => {
+        clearTimeout(t);
+        resolve(page);
+      });
+    });
+  };
+
+  const close = async () => {
+    try {
+      await browser.close();
+    } catch {
+      /* ignore */
+    }
+    if (!proc.killed) proc.kill('SIGTERM');
+  };
+
+  return { browser, context, proc, firstWindow, close };
 }
