@@ -127,7 +127,7 @@ jobs:
           echo '{}' > "$HOME/.config/obsidian/$VAULT_ID.json"
           ls -la "$VAULT/.obsidian/" "$HOME/.config/obsidian/"
 
-      - name: Diagnostic — Obsidian launch with vault configured
+      - name: Diagnostic — Obsidian background + window capture
         if: always() && steps.e2e-vault.outcome == 'success'
         continue-on-error: true
         env:
@@ -135,17 +135,36 @@ jobs:
           ELECTRON_ENABLE_STACK_DUMPING: '1'
         run: |
           set +e
-          echo "::group::Obsidian launch (25s timeout, verbose Electron, swiftshader software GL)"
-          timeout 25s /opt/Obsidian/obsidian \
+          # Run Obsidian in the background with the vault as a positional arg
+          # so we can probe for windows while it's alive.
+          /opt/Obsidian/obsidian /tmp/obsidian-test-vault \
             --no-sandbox --disable-dev-shm-usage \
             --disable-gpu --disable-software-rasterizer --use-gl=swiftshader \
-            2>&1 | head -400
-          EXIT=$?
+            > /tmp/obsidian.log 2>&1 &
+          OBS_PID=$!
+          echo "Obsidian PID: $OBS_PID"
+          for i in $(seq 1 12); do
+            if ! kill -0 "$OBS_PID" 2>/dev/null; then
+              echo "Obsidian died at t=${i}s"
+              break
+            fi
+            sleep 1
+          done
+          echo "::group::Obsidian stdout/stderr"
+          cat /tmp/obsidian.log | head -300
           echo "::endgroup::"
-          echo "Obsidian exit code: $EXIT  (124/143 = killed by timeout = ran ok; 0 = quit cleanly)"
-          echo "::group::Window list at end of run (xdotool)"
-          DISPLAY=:99 xdotool search --name '.*' getwindowname %@ 2>&1 || echo "no windows found / xdotool missing"
+          echo "::group::All windows after warmup"
+          DISPLAY=:99 xdotool search --name '.*' getwindowname %@ 2>&1 || echo "(xdotool reported nothing)"
+          DISPLAY=:99 wmctrl -l 2>&1 || true
           echo "::endgroup::"
+          if kill -0 "$OBS_PID" 2>/dev/null; then
+            echo "✓ Obsidian still alive after warmup"
+            kill -TERM "$OBS_PID" 2>/dev/null
+            sleep 2
+            kill -KILL "$OBS_PID" 2>/dev/null
+          else
+            echo "✗ Obsidian exited during warmup"
+          fi
 
       - name: E2E smoke tests
         id: e2e
