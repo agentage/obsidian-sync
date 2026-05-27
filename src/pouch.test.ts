@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import PouchDB from 'pouchdb';
 import memoryAdapter from 'pouchdb-adapter-memory';
-import { upsertNote, type MemoryDoc } from './pouch';
+import { removeNote, upsertNote, type MemoryDoc } from './pouch';
 
 PouchDB.plugin(memoryAdapter);
 
@@ -107,5 +107,54 @@ describe('PouchDB.sync (engine the plugin rides on)', () => {
       conflicts: true,
     })) as PouchDB.Core.Document<MemoryDoc> & { _conflicts?: string[] };
     expect(withConflicts._conflicts?.length).toBe(1);
+  });
+});
+
+describe('removeNote', () => {
+  let db: PouchDB.Database<MemoryDoc>;
+  beforeEach(() => {
+    db = memDb(`test-remove-${uniq()}`);
+  });
+  afterEach(async () => {
+    await db.destroy();
+  });
+
+  it('removes an existing doc and returns a tombstone revision', async () => {
+    await upsertNote(db, 'a.md', 'content', 1);
+    const r = await removeNote(db, 'a.md');
+    expect(r).not.toBeNull();
+    expect(r?.rev.startsWith('2-')).toBe(true);
+    await expect(db.get('a.md')).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('returns null (no-op) when the doc does not exist', async () => {
+    const r = await removeNote(db, 'never-existed.md');
+    expect(r).toBeNull();
+  });
+});
+
+describe('rename via remove + upsert (two-way sync semantics)', () => {
+  let local: PouchDB.Database<MemoryDoc>;
+  let remote: PouchDB.Database<MemoryDoc>;
+  beforeEach(() => {
+    local = memDb(`test-rename-local-${uniq()}`);
+    remote = memDb(`test-rename-remote-${uniq()}`);
+  });
+  afterEach(async () => {
+    await local.destroy();
+    await remote.destroy();
+  });
+
+  it('replicates a rename as a delete of old _id + put at new _id', async () => {
+    await upsertNote(local, 'old.md', 'body', 1);
+    await PouchDB.sync(local, remote);
+    // Local rename: remove old, upsert new (same content).
+    await removeNote(local, 'old.md');
+    await upsertNote(local, 'new.md', 'body', 2);
+    await PouchDB.sync(local, remote);
+
+    await expect(remote.get('old.md')).rejects.toMatchObject({ status: 404 });
+    const renamed = await remote.get('new.md');
+    expect(renamed.content).toBe('body');
   });
 });

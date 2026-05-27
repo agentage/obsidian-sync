@@ -2,10 +2,8 @@ import { Notice, Plugin, TFile, setIcon } from 'obsidian';
 import { DEFAULT_SETTINGS, type AgentageMemorySettings } from './settings';
 import {
   destroyLocalDb,
-  getLocalDb,
   pushNoteViaPouch,
   startContinuousSync,
-  upsertNote,
   type PushCreds,
   type ReplicationHandle,
   type SyncChange,
@@ -16,6 +14,7 @@ import { createEchoSuppress } from './echo-suppress';
 import { applyDocToVault } from './apply-doc';
 import { AgentageMemorySettingTab } from './settings-tab';
 import { describeErr } from './errors';
+import { handleNoteChange, handleNoteDelete, handleNoteRename } from './vault-events';
 
 const RIBBON_ICON = 'refresh-cw';
 
@@ -93,27 +92,31 @@ export default class AgentageMemoryPlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on('modify', (file) => {
         if (file instanceof TFile && file.extension === 'md') {
-          void this.onVaultNoteChanged(file);
+          void handleNoteChange(this.app, this.echo, file);
         }
       })
     );
     this.registerEvent(
       this.app.vault.on('create', (file) => {
         if (file instanceof TFile && file.extension === 'md') {
-          void this.onVaultNoteChanged(file);
+          void handleNoteChange(this.app, this.echo, file);
         }
       })
     );
-  }
-
-  private async onVaultNoteChanged(file: TFile): Promise<void> {
-    if (this.echo.consume(file.path)) return;
-    try {
-      const content = await this.app.vault.read(file);
-      await upsertNote(getLocalDb(), file.path, content, file.stat.mtime);
-    } catch (err) {
-      console.error('[Agentage Memory] auto-upsert failed', file.path, err);
-    }
+    this.registerEvent(
+      this.app.vault.on('delete', (file) => {
+        if (file instanceof TFile && file.extension === 'md') {
+          void handleNoteDelete(this.echo, file.path);
+        }
+      })
+    );
+    this.registerEvent(
+      this.app.vault.on('rename', (file, oldPath) => {
+        if (file instanceof TFile && file.extension === 'md') {
+          void handleNoteRename(this.app, this.echo, file, oldPath);
+        }
+      })
+    );
   }
 
   startReplication(): void {
