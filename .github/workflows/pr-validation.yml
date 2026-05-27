@@ -67,7 +67,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            xvfb herbstluftwm dzen2 x11-xserver-utils xfonts-base xfonts-100dpi jq
+            xvfb herbstluftwm dzen2 x11-xserver-utils xdotool xfonts-base xfonts-100dpi jq \
+            libgl1-mesa-dri libglx-mesa0 libegl-mesa0 mesa-utils
           OBSIDIAN_VERSION=$(curl -fsSL https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest | jq -r .tag_name | sed 's/^v//')
           echo "Obsidian version: $OBSIDIAN_VERSION"
           curl -fsSL -o /tmp/obsidian.deb \
@@ -134,9 +135,10 @@ jobs:
           ELECTRON_ENABLE_STACK_DUMPING: '1'
         run: |
           set +e
-          echo "::group::Obsidian launch (25s timeout, verbose Electron, no --disable-gpu)"
+          echo "::group::Obsidian launch (25s timeout, verbose Electron, swiftshader software GL)"
           timeout 25s /opt/Obsidian/obsidian \
             --no-sandbox --disable-dev-shm-usage \
+            --disable-gpu --disable-software-rasterizer --use-gl=swiftshader \
             2>&1 | head -400
           EXIT=$?
           echo "::endgroup::"

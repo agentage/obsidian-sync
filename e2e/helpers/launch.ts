@@ -38,12 +38,16 @@ export async function launchObsidian(opts: LaunchOptions = {}): Promise<Electron
   const vault = opts.vault ?? process.env.OBSIDIAN_VAULT;
   const args: string[] = [];
   if (vault) args.push(vault);
-  // Minimal flags: --no-sandbox is needed under Snap and inside CI sandboxes.
-  // --disable-dev-shm-usage avoids the small /dev/shm Chromium hits in CI.
-  // We intentionally do NOT pass --disable-gpu — the herbstluftwm + Xvfb
-  // setup the workflow stages relies on a working renderer to actually paint
-  // the window that Playwright's `firstWindow()` blocks on.
-  args.push('--no-sandbox', '--disable-dev-shm-usage');
+  // Xvfb has no dri3 — the GPU process crashes and takes the renderer with
+  // it, so Playwright's `firstWindow()` never resolves. Force the software
+  // path with --disable-gpu + --disable-software-rasterizer + --use-gl=swiftshader.
+  args.push(
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--disable-software-rasterizer',
+    '--use-gl=swiftshader'
+  );
 
   const app = await _electron.launch({
     executablePath: findObsidianBinary(),
