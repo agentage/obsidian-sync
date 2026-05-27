@@ -91,28 +91,33 @@ jobs:
         run: |
           set -eu
           VAULT=/tmp/obsidian-test-vault
+          VAULT_ID=citest
           mkdir -p "$VAULT/.obsidian/plugins"
-          # Symlink the freshly built plugin into the vault so Obsidian discovers it.
           ln -sfn "$GITHUB_WORKSPACE" "$VAULT/.obsidian/plugins/agentage-memory"
-          # Mark the plugin as enabled.
           echo '["agentage-memory"]' > "$VAULT/.obsidian/community-plugins.json"
-          # Tell Obsidian which vault to open on launch — without this it shows the
-          # vault picker and quits when no display is available.
+          # Seed a real note so the vault has content; some first-run code paths
+          # bail when the vault is empty.
+          echo "# CI smoke" > "$VAULT/Welcome.md"
+          # Bare workspace + appearance so Obsidian doesn't try a first-run
+          # walkthrough/modal that blocks the main window from rendering.
+          cat > "$VAULT/.obsidian/workspace.json" <<'WSEOF'
+          { "main": { "id": "root", "type": "split", "children": [] }, "left": { "id": "left", "type": "split", "children": [] }, "right": { "id": "right", "type": "split", "children": [] }, "active": "root" }
+          WSEOF
+          echo '{}' > "$VAULT/.obsidian/appearance.json"
+          # Registry — tells Obsidian which vault to open on launch.
           mkdir -p "$HOME/.config/obsidian"
           TS=$(date +%s%3N)
           cat > "$HOME/.config/obsidian/obsidian.json" <<EOF
           {
             "vaults": {
-              "citest": {
-                "path": "$VAULT",
-                "ts": $TS,
-                "open": true
-              }
+              "$VAULT_ID": { "path": "$VAULT", "ts": $TS, "open": true }
             }
           }
           EOF
-          ls -la "$VAULT/.obsidian/plugins/agentage-memory/"
-          cat "$HOME/.config/obsidian/obsidian.json"
+          # Per-vault preferences — Obsidian errors silently on this missing
+          # ENOENT and ends up exiting with no window.
+          echo '{}' > "$HOME/.config/obsidian/$VAULT_ID.json"
+          ls -la "$VAULT/.obsidian/" "$HOME/.config/obsidian/"
 
       - name: Diagnostic — Obsidian launch with vault configured
         if: always() && steps.e2e-vault.outcome == 'success'
