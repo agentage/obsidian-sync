@@ -44,11 +44,8 @@ export interface ObsidianHandle {
   close(): Promise<void>;
 }
 
-// Playwright's `_electron.launch` waits for BOTH the node inspector (`--inspect=0`)
-// and chrome devtools (`--remote-debugging-port=0`) to be reachable before it
-// resolves. Obsidian's asar loader does not enable the node inspector — only
-// chrome devtools comes up — so `_electron.launch` hangs until its timeout.
-// Spawn the binary directly and connect via `chromium.connectOverCDP` instead.
+// `_electron.launch` waits for the node inspector Obsidian never opens and
+// hangs. Spawn directly, parse the DevTools URL, attach via `connectOverCDP`.
 export async function launchObsidian(opts: LaunchOptions = {}): Promise<ObsidianHandle> {
   const vault = opts.vault ?? process.env.OBSIDIAN_VAULT;
   const cdpPort = opts.cdpPort ?? 0;
