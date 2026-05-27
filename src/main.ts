@@ -1,91 +1,31 @@
-import { Notice, Plugin, PluginSettingTab, Setting, TFile, requestUrl, type App } from 'obsidian';
-import { DEFAULT_SETTINGS, normalizeServerUrl, type AgentageMemorySettings } from './settings';
-import { pingServer } from './connection';
+import { Notice, Plugin, TFile, setIcon } from 'obsidian';
+import { DEFAULT_SETTINGS, type AgentageMemorySettings } from './settings';
 import {
   destroyLocalDb,
   getLocalDb,
   pushNoteViaPouch,
   startContinuousSync,
   upsertNote,
-  type MemoryDoc,
-  type PouchFetch,
   type PushCreds,
   type ReplicationHandle,
   type SyncChange,
 } from './pouch';
+import { obsidianFetchForPouch } from './obsidian-fetch';
+import { statusDisplay, type StatusState } from './status';
+import { createEchoSuppress } from './echo-suppress';
+import { applyDocToVault } from './apply-doc';
+import { AgentageMemorySettingTab } from './settings-tab';
+import { describeErr } from './errors';
 
-// Lucide icon id for the left-ribbon button. Ribbon icons are monochrome
-// (theme-tinted); swap for a custom single-color SVG via addIcon() later.
 const RIBBON_ICON = 'refresh-cw';
 
-/** How long an echo suppression entry stays valid before being garbage-collected. */
-const ECHO_SUPPRESS_MS = 5_000;
-
-/** Extract useful fields from a PouchDB/fetch error so logs are not just `n`. */
-function describeErr(err: unknown): Record<string, unknown> | string {
-  if (err == null) return 'unknown';
-  if (typeof err !== 'object') return String(err);
-  const e = err as Record<string, unknown>;
-  return {
-    name: e.name,
-    message: e.message,
-    status: e.status,
-    reason: e.reason,
-    error: e.error,
-    docId: e.docId,
-  };
-}
-
-/** Normalize the three valid `HeadersInit` shapes into a plain object. */
-function headersToObject(h: HeadersInit | undefined | null): Record<string, string> {
-  if (!h) return {};
-  if (h instanceof Headers) {
-    const out: Record<string, string> = {};
-    h.forEach((v, k) => {
-      out[k] = v;
-    });
-    return out;
-  }
-  if (Array.isArray(h)) return Object.fromEntries(h);
-  return { ...(h as Record<string, string>) };
-}
-
-/**
- * Wrap Obsidian's `requestUrl` to look like the browser `fetch` API and inject
- * Basic auth + JSON Content-Type on every request.
- *
- * Auth must be baked in here (rather than via PouchDB's `auth` constructor
- * option) because that option does not propagate to the live replication
- * `_changes` feed in PouchDB 7+. CouchDB also rejects bodied requests without
- * an explicit `Content-Type: application/json` (415 `bad_content_type`).
- */
-function obsidianFetchForPouch(creds: PushCreds): PouchFetch {
-  const authHeader = 'Basic ' + btoa(`${creds.username}:${creds.password}`);
-  return async (input, init) => {
-    const url = typeof input === 'string' ? input : input.toString();
-    const method = init?.method ?? 'GET';
-    const body = (init?.body as string) ?? undefined;
-    const headers: Record<string, string> = {
-      ...headersToObject(init?.headers),
-      Authorization: authHeader,
-    };
-    if (body && !Object.keys(headers).some((k) => k.toLowerCase() === 'content-type')) {
-      headers['Content-Type'] = 'application/json';
-    }
-    const res = await requestUrl({ url, method, headers, body, throw: false });
-    return new Response(res.text, { status: res.status, headers: res.headers });
-  };
-}
-
-// NOTE: Obsidian loads the entry plugin class as the module's DEFAULT export.
-// This is the one place we use a default export (platform requirement);
-// everything else in src/ uses named exports per the project conventions.
+// Obsidian loads the entry plugin class as the module's DEFAULT export. This
+// is the one place we use a default export; everything else uses named exports.
 export default class AgentageMemoryPlugin extends Plugin {
   settings: AgentageMemorySettings = DEFAULT_SETTINGS;
   private replication: ReplicationHandle | null = null;
   private statusBar: HTMLElement | null = null;
-  /** Paths we just wrote *from sync*; the matching vault event must be ignored. */
-  private echoSuppress = new Map<string, number>();
+  private readonly echo = createEchoSuppress();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -138,31 +78,17 @@ export default class AgentageMemoryPlugin extends Plugin {
     };
   }
 
-  private setStatus(state: 'idle' | 'active' | 'synced' | 'error', detail?: string): void {
+  private setStatus(state: StatusState, detail?: string): void {
     if (!this.statusBar) return;
-    const label = {
-      idle: 'memory: idle',
-      active: 'memory: syncing…',
-      synced: 'memory: in sync',
-      error: `memory: error${detail ? ` (${detail})` : ''}`,
-    }[state];
-    this.statusBar.setText(label);
+    const { iconId, tooltip, color } = statusDisplay(state, detail);
+    this.statusBar.empty();
+    const iconEl = this.statusBar.createSpan({ cls: 'agentage-memory-status-icon' });
+    iconEl.dataset.status = state;
+    iconEl.style.color = color;
+    setIcon(iconEl, iconId);
+    this.statusBar.title = tooltip;
   }
 
-  // ---- echo-loop guard --------------------------------------------------
-  private markEchoSuppress(path: string): void {
-    this.echoSuppress.set(path, Date.now());
-  }
-
-  /** Returns true (and consumes the entry) if this vault event was triggered by us. */
-  private consumeEchoSuppress(path: string): boolean {
-    const ts = this.echoSuppress.get(path);
-    if (ts == null) return false;
-    this.echoSuppress.delete(path);
-    return Date.now() - ts < ECHO_SUPPRESS_MS;
-  }
-
-  // ---- vault → cloud ---------------------------------------------------
   private registerVaultEvents(): void {
     this.registerEvent(
       this.app.vault.on('modify', (file) => {
@@ -181,7 +107,7 @@ export default class AgentageMemoryPlugin extends Plugin {
   }
 
   private async onVaultNoteChanged(file: TFile): Promise<void> {
-    if (this.consumeEchoSuppress(file.path)) return;
+    if (this.echo.consume(file.path)) return;
     try {
       const content = await this.app.vault.read(file);
       await upsertNote(getLocalDb(), file.path, content, file.stat.mtime);
@@ -190,40 +116,6 @@ export default class AgentageMemoryPlugin extends Plugin {
     }
   }
 
-  // ---- cloud → vault ---------------------------------------------------
-  private async applyDocToVault(doc: MemoryDoc): Promise<void> {
-    const path = doc._id;
-    if (!path) return;
-    const existing = this.app.vault.getAbstractFileByPath(path);
-
-    if (doc._deleted) {
-      if (existing instanceof TFile) {
-        this.markEchoSuppress(path);
-        // Safe delete: route to system trash, not a hard wipe.
-        await this.app.vault.trash(existing, true);
-      }
-      return;
-    }
-
-    const content = doc.content ?? '';
-    if (existing instanceof TFile) {
-      const current = await this.app.vault.read(existing);
-      if (current === content) return; // no-op; nothing to write, no echo to emit.
-      this.markEchoSuppress(path);
-      await this.app.vault.modify(existing, content);
-      return;
-    }
-
-    // Create — ensure parent folder exists first.
-    const parent = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
-    if (parent && !this.app.vault.getAbstractFileByPath(parent)) {
-      await this.app.vault.createFolder(parent).catch(() => {});
-    }
-    this.markEchoSuppress(path);
-    await this.app.vault.create(path, content);
-  }
-
-  // ---- replication lifecycle ------------------------------------------
   startReplication(): void {
     this.stopReplication();
     try {
@@ -235,20 +127,7 @@ export default class AgentageMemoryPlugin extends Plugin {
           }
           this.setStatus('synced');
         },
-        onChange: (info: SyncChange) => {
-          console.log(
-            '[Agentage Memory] sync',
-            info.direction,
-            `read=${info.docsRead} written=${info.docsWritten}`
-          );
-          if (info.direction === 'pull') {
-            for (const doc of info.docs) {
-              void this.applyDocToVault(doc).catch((err) =>
-                console.error('[Agentage Memory] applyDocToVault failed', doc._id, err)
-              );
-            }
-          }
-        },
+        onChange: (info: SyncChange) => this.onSyncChange(info),
         onError: (err) => {
           console.error('[Agentage Memory] replication terminated:', describeErr(err));
           this.setStatus('error');
@@ -257,6 +136,20 @@ export default class AgentageMemoryPlugin extends Plugin {
     } catch (err) {
       console.error('[Agentage Memory] startReplication failed:', describeErr(err));
       this.setStatus('error');
+    }
+  }
+
+  private onSyncChange(info: SyncChange): void {
+    console.log(
+      '[Agentage Memory] sync',
+      info.direction,
+      `read=${info.docsRead} written=${info.docsWritten}`
+    );
+    if (info.direction !== 'pull') return;
+    for (const doc of info.docs) {
+      void applyDocToVault(this.app, doc, this.echo).catch((err) =>
+        console.error('[Agentage Memory] applyDocToVault failed', doc._id, err)
+      );
     }
   }
 
@@ -291,81 +184,5 @@ export default class AgentageMemoryPlugin extends Plugin {
     } catch (err) {
       new Notice(`Push failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }
-}
-
-class AgentageMemorySettingTab extends PluginSettingTab {
-  private readonly plugin: AgentageMemoryPlugin;
-
-  constructor(app: App, plugin: AgentageMemoryPlugin) {
-    super(app, plugin);
-    this.plugin = plugin;
-  }
-
-  display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-
-    new Setting(containerEl)
-      .setName('Server URL')
-      .setDesc('Your Agentage Memory cloud endpoint. Leave the default unless told otherwise.')
-      .addText((text) =>
-        text
-          .setPlaceholder('https://mcp.agentage.io')
-          .setValue(this.plugin.settings.serverUrl)
-          .onChange(async (value) => {
-            this.plugin.settings.serverUrl = normalizeServerUrl(value);
-            await this.plugin.saveSettings();
-            this.plugin.startReplication();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName('Username')
-      .setDesc('CouchDB username (local dev only — moves to OAuth + secret storage later).')
-      .addText((text) =>
-        text
-          .setPlaceholder('admin')
-          .setValue(this.plugin.settings.username)
-          .onChange(async (value) => {
-            this.plugin.settings.username = value.trim();
-            await this.plugin.saveSettings();
-            this.plugin.startReplication();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName('Password')
-      .setDesc('CouchDB password (stored in plaintext data.json — local dev only).')
-      .addText((text) => {
-        text
-          .setPlaceholder('agentage')
-          .setValue(this.plugin.settings.password)
-          .onChange(async (value) => {
-            this.plugin.settings.password = value;
-            await this.plugin.saveSettings();
-            this.plugin.startReplication();
-          });
-        text.inputEl.type = 'password';
-      });
-
-    new Setting(containerEl)
-      .setName('Test connection')
-      .setDesc('Ping the server URL to confirm it is reachable.')
-      .addButton((btn) =>
-        btn.setButtonText('Test').onClick(async () => {
-          btn.setDisabled(true).setButtonText('Testing…');
-          const r = await pingServer(this.plugin.settings.serverUrl, async (u) => {
-            const res = await requestUrl({ url: u, method: 'GET', throw: false });
-            return { status: res.status };
-          });
-          btn.setDisabled(false).setButtonText('Test');
-          new Notice(
-            r.ok
-              ? `Connected (HTTP ${r.status})`
-              : `Failed: ${r.error ?? `HTTP ${r.status ?? '?'}`}`
-          );
-        })
-      );
   }
 }

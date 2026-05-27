@@ -62,4 +62,6 @@ OBSIDIAN_BIN=/path npm run test:e2e   # override binary location
 
 ## License
 
-MIT © agentage
+**Proprietary — All Rights Reserved.** Copyright © 2026 agentage.
+
+The source is published here for transparency and security review. End users may run the plugin inside Obsidian under the terms in [`LICENSE`](./LICENSE); no rights to fork, redistribute, or build derivative works are granted. For commercial licensing, contact `hello@agentage.io`.
