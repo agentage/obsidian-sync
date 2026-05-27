@@ -67,7 +67,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            xvfb herbstluftwm dzen2 x11-xserver-utils jq
+            xvfb herbstluftwm dzen2 x11-xserver-utils xfonts-base xfonts-100dpi jq
           OBSIDIAN_VERSION=$(curl -fsSL https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest | jq -r .tag_name | sed 's/^v//')
           echo "Obsidian version: $OBSIDIAN_VERSION"
           curl -fsSL -o /tmp/obsidian.deb \
@@ -81,9 +81,16 @@ jobs:
         run: |
           Xvfb :99 -screen 0 1280x1024x24 +extension GLX +extension RANDR -noreset &
           sleep 1
+          # Suppress herbstluftwm's panel autostart (the default panel.sh
+          # crashes on Xvfb because xrandr returns an empty resolution string
+          # which the panel width math can't parse — saw BadDrawable last run).
+          mkdir -p "$HOME/.config/herbstluftwm"
+          printf '#!/bin/bash\nexit 0\n' > "$HOME/.config/herbstluftwm/autostart"
+          chmod +x "$HOME/.config/herbstluftwm/autostart"
           DISPLAY=:99 herbstluftwm &
           sleep 1
           echo "DISPLAY=:99" >> "$GITHUB_ENV"
+          DISPLAY=:99 xdpyinfo | head -5 || true
 
       - name: Pre-configure Obsidian (test vault, plugin symlink, vault registry)
         id: e2e-vault
@@ -137,6 +144,7 @@ jobs:
         if: always() && steps.e2e-vault.outcome == 'success'
         env:
           OBSIDIAN_BIN: /opt/Obsidian/obsidian
+          OBSIDIAN_VAULT: /tmp/obsidian-test-vault
         run: npm run test:e2e
 
       - name: Upload E2E artifacts
