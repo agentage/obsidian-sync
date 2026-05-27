@@ -26,6 +26,7 @@ export default defineConfig({
         'src/apply-doc.ts',
         'src/obsidian-fetch.ts',
         'src/settings-tab.ts',
+        'src/vault-events.ts',
       ],
       thresholds: {
         branches: 70,

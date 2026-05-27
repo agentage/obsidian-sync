@@ -91,6 +91,25 @@ export async function upsertNote(
 }
 
 /**
+ * Soft-delete a note in PouchDB. Creates a tombstone that replicates
+ * upstream so other clients can route the deletion to system trash. Returns
+ * the tombstone revision, or `null` when the doc didn't exist (no-op).
+ */
+export async function removeNote(
+  db: PouchDB.Database<MemoryDoc>,
+  vaultPath: string
+): Promise<{ id: string; rev: string } | null> {
+  try {
+    const doc = await db.get(vaultPath);
+    const result = await db.remove(doc._id, doc._rev as string);
+    return { id: result.id, rev: result.rev };
+  } catch (err) {
+    if ((err as { status?: number } | null)?.status === 404) return null;
+    throw err;
+  }
+}
+
+/**
  * Push a vault note to CouchDB via the local PouchDB.
  * 1. Upsert to the local DB.
  * 2. One-shot replicate that single doc to the remote (creates the target DB
