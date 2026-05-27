@@ -2,6 +2,9 @@ export interface AgentageMemorySettings {
   serverUrl: string;
   username: string;
   password: string;
+  /** CouchDB database name. Configurable so e2e tests and future per-vault
+   * setups can target an isolated DB on the same server. */
+  dbName: string;
 }
 
 export const DEFAULT_SETTINGS: AgentageMemorySettings = {
@@ -11,6 +14,7 @@ export const DEFAULT_SETTINGS: AgentageMemorySettings = {
   // they live in plaintext data.json — use only for local development.
   username: 'admin',
   password: 'agentage',
+  dbName: 'agentage-memory',
 };
 
 /** Trim whitespace and any trailing slashes from a server URL. */
