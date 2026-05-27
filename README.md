@@ -43,6 +43,17 @@ Then open any note and run **Command Palette → "Push current note to Agentage 
 curl -sS -u admin:agentage http://localhost:5984/agentage-memory/_all_docs
 ```
 
+### End-to-end tests (Playwright Electron)
+
+```bash
+npm run test:e2e          # launches Obsidian + drives it via Playwright
+OBSIDIAN_BIN=/path npm run test:e2e   # override binary location
+```
+
+**Snap caveat:** Snap-installed Obsidian on Linux runs in a confined sandbox; Playwright may fail to attach. If you hit permission errors, install the AppImage version from <https://obsidian.md/download>, make it executable, and point `OBSIDIAN_BIN` at it.
+
+**CI:** these tests **run on every PR**. The workflow installs the latest Obsidian `.deb` into the Ubuntu runner, points `OBSIDIAN_BIN` at `/opt/Obsidian/obsidian`, and drives Playwright under `xvfb-run`. Failures upload `test-results/` + `playwright-report/` as workflow artifacts.
+
 ## Privacy & network use
 
 - **Account required:** you need an agentage account to sync.

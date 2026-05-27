@@ -20,6 +20,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
     "clean": "rm -rf main.js *.map coverage",
     "couchdb:up": "docker compose up -d",
     "couchdb:down": "docker compose down",
@@ -37,6 +38,7 @@
   "author": "agentage",
   "license": "MIT",
   "devDependencies": {
+    "@playwright/test": "1.60.0",
     "@types/node": "^25.9.1",
     "@types/pouchdb": "6.4.2",
     "@types/pouchdb-browser": "6.1.5",

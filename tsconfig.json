@@ -16,9 +16,10 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
+    "types": ["node"],
     "inlineSourceMap": true,
     "inlineSources": true
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "coverage"]
+  "include": ["src/**/*.ts", "e2e/**/*.ts", "playwright.config.ts"],
+  "exclude": ["node_modules", "coverage", "test-results", "playwright-report"]
 }

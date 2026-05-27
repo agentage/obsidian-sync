@@ -17,7 +17,7 @@ jobs:
   validate:
     name: 🔍 Validate Pull Request
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
@@ -58,6 +58,80 @@ jobs:
         if: always() && steps.install.outcome == 'success'
         run: npm run build
 
+      - name: Install Obsidian + xvfb for E2E
+        id: e2e-setup
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xvfb jq
+          OBSIDIAN_VERSION=$(curl -fsSL https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest | jq -r .tag_name | sed 's/^v//')
+          echo "Obsidian version: $OBSIDIAN_VERSION"
+          curl -fsSL -o /tmp/obsidian.deb \
+            "https://github.com/obsidianmd/obsidian-releases/releases/download/v${OBSIDIAN_VERSION}/obsidian_${OBSIDIAN_VERSION}_amd64.deb"
+          sudo apt-get install -y --no-install-recommends /tmp/obsidian.deb
+          ls -la /opt/Obsidian/
+
+      - name: Pre-configure Obsidian (test vault, plugin symlink, vault registry)
+        id: e2e-vault
+        if: always() && steps.e2e-setup.outcome == 'success'
+        run: |
+          set -eu
+          VAULT=/tmp/obsidian-test-vault
+          mkdir -p "$VAULT/.obsidian/plugins"
+          # Symlink the freshly built plugin into the vault so Obsidian discovers it.
+          ln -sfn "$GITHUB_WORKSPACE" "$VAULT/.obsidian/plugins/agentage-memory"
+          # Mark the plugin as enabled.
+          echo '["agentage-memory"]' > "$VAULT/.obsidian/community-plugins.json"
+          # Tell Obsidian which vault to open on launch — without this it shows the
+          # vault picker and quits when no display is available.
+          mkdir -p "$HOME/.config/obsidian"
+          TS=$(date +%s%3N)
+          cat > "$HOME/.config/obsidian/obsidian.json" <<EOF
+          {
+            "vaults": {
+              "citest": {
+                "path": "$VAULT",
+                "ts": $TS,
+                "open": true
+              }
+            }
+          }
+          EOF
+          ls -la "$VAULT/.obsidian/plugins/agentage-memory/"
+          cat "$HOME/.config/obsidian/obsidian.json"
+
+      - name: Diagnostic — Obsidian launch with vault configured
+        if: always() && steps.e2e-vault.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set +e
+          echo "::group::Obsidian launch (25s timeout, with vault configured)"
+          timeout 25s xvfb-run -a --server-args="-screen 0 1280x720x24 +extension RANDR" \
+            /opt/Obsidian/obsidian \
+            --no-sandbox --disable-gpu --disable-software-rasterizer --disable-dev-shm-usage \
+            2>&1 | head -300
+          EXIT=$?
+          echo "::endgroup::"
+          echo "Obsidian exit code: $EXIT  (124/143 = killed by timeout = ran ok; other = died early)"
+
+      - name: E2E smoke tests
+        id: e2e
+        if: always() && steps.e2e-vault.outcome == 'success'
+        env:
+          OBSIDIAN_BIN: /opt/Obsidian/obsidian
+        run: xvfb-run -a --server-args="-screen 0 1280x720x24 +extension RANDR" npm run test:e2e
+
+      - name: Upload E2E artifacts
+        if: always() && steps.e2e.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results-${{ github.run_id }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Comment on PR
         if: always()
         uses: actions/github-script@v9
@@ -71,6 +145,9 @@ jobs:
               { name: 'Format check passed', outcome: '${{ steps.format.outcome }}' },
               { name: 'Tests + coverage passed', outcome: '${{ steps.test.outcome }}' },
               { name: 'Build successful', outcome: '${{ steps.build.outcome }}' },
+              { name: 'Obsidian installed for E2E', outcome: '${{ steps.e2e-setup.outcome }}' },
+              { name: 'Test vault + plugin symlink ready', outcome: '${{ steps.e2e-vault.outcome }}' },
+              { name: 'E2E smoke tests passed', outcome: '${{ steps.e2e.outcome }}' },
             ];
             const allPassed = checks.every((c) => c.outcome === 'success');
             const status = allPassed ? '✅ PASSED' : '❌ FAILED';
