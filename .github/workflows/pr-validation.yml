@@ -61,70 +61,17 @@ jobs:
       - name: Install Obsidian + Xvfb + window manager for E2E
         id: e2e-setup
         if: always() && steps.build.outcome == 'success'
-        # Obsidian's renderer needs a real window manager under Xvfb; without
-        # one Electron hangs before painting.
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            xvfb herbstluftwm x11-xserver-utils xfonts-base xfonts-100dpi jq \
-            libgl1-mesa-dri libglx-mesa0 libegl-mesa0
-          OBSIDIAN_VERSION=$(curl -fsSL https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest | jq -r .tag_name | sed 's/^v//')
-          echo "Obsidian version: $OBSIDIAN_VERSION"
-          curl -fsSL -o /tmp/obsidian.deb \
-            "https://github.com/obsidianmd/obsidian-releases/releases/download/v${OBSIDIAN_VERSION}/obsidian_${OBSIDIAN_VERSION}_amd64.deb"
-          sudo apt-get install -y --no-install-recommends /tmp/obsidian.deb
-          ls -la /opt/Obsidian/
+        run: ./scripts/e2e/install-obsidian.sh
 
       - name: Start Xvfb + window manager
         id: display
         if: always() && steps.e2e-setup.outcome == 'success'
-        run: |
-          Xvfb :99 -screen 0 1280x1024x24 +extension GLX +extension RANDR -noreset &
-          sleep 1
-          # Suppress herbstluftwm's panel autostart (the default panel.sh
-          # crashes on Xvfb because xrandr returns an empty resolution string
-          # which the panel width math can't parse — saw BadDrawable last run).
-          mkdir -p "$HOME/.config/herbstluftwm"
-          printf '#!/bin/bash\nexit 0\n' > "$HOME/.config/herbstluftwm/autostart"
-          chmod +x "$HOME/.config/herbstluftwm/autostart"
-          DISPLAY=:99 herbstluftwm &
-          sleep 1
-          echo "DISPLAY=:99" >> "$GITHUB_ENV"
-          DISPLAY=:99 xdpyinfo | head -5 || true
+        run: ./scripts/e2e/start-display.sh
 
       - name: Pre-configure Obsidian (test vault, plugin symlink, vault registry)
         id: e2e-vault
         if: always() && steps.e2e-setup.outcome == 'success'
-        run: |
-          set -eu
-          VAULT=/tmp/obsidian-test-vault
-          VAULT_ID=citest
-          mkdir -p "$VAULT/.obsidian/plugins"
-          ln -sfn "$GITHUB_WORKSPACE" "$VAULT/.obsidian/plugins/agentage-memory"
-          echo '["agentage-memory"]' > "$VAULT/.obsidian/community-plugins.json"
-          # Seed a real note so the vault has content; some first-run code paths
-          # bail when the vault is empty.
-          echo "# CI smoke" > "$VAULT/Welcome.md"
-          # Bare workspace + appearance so Obsidian doesn't try a first-run
-          # walkthrough/modal that blocks the main window from rendering.
-          cat > "$VAULT/.obsidian/workspace.json" <<'WSEOF'
-          { "main": { "id": "root", "type": "split", "children": [] }, "left": { "id": "left", "type": "split", "children": [] }, "right": { "id": "right", "type": "split", "children": [] }, "active": "root" }
-          WSEOF
-          echo '{}' > "$VAULT/.obsidian/appearance.json"
-          # Registry — tells Obsidian which vault to open on launch.
-          mkdir -p "$HOME/.config/obsidian"
-          TS=$(date +%s%3N)
-          cat > "$HOME/.config/obsidian/obsidian.json" <<EOF
-          {
-            "vaults": {
-              "$VAULT_ID": { "path": "$VAULT", "ts": $TS, "open": true }
-            }
-          }
-          EOF
-          # Per-vault preferences — Obsidian errors silently on this missing
-          # ENOENT and ends up exiting with no window.
-          echo '{}' > "$HOME/.config/obsidian/$VAULT_ID.json"
-          ls -la "$VAULT/.obsidian/" "$HOME/.config/obsidian/"
+        run: ./scripts/e2e/setup-vault.sh
 
       - name: E2E smoke tests
         id: e2e
