@@ -10,13 +10,14 @@
  */
 import PouchDB from 'pouchdb-browser';
 
-export const DB_NAME = 'agentage-memory';
 export const LOCAL_DB_NAME = 'agentage-memory-local';
 
 export interface PushCreds {
   serverUrl: string;
   username: string;
   password: string;
+  /** Remote CouchDB database name. */
+  dbName: string;
 }
 
 export interface MemoryDoc {
@@ -49,7 +50,7 @@ export async function destroyLocalDb(): Promise<void> {
 }
 
 function remoteUrl(creds: PushCreds): string {
-  return `${creds.serverUrl.replace(/\/+$/, '')}/${DB_NAME}`;
+  return `${creds.serverUrl.replace(/\/+$/, '')}/${creds.dbName}`;
 }
 
 /**

@@ -74,6 +74,7 @@ export default class AgentageMemoryPlugin extends Plugin {
       serverUrl: this.settings.serverUrl,
       username: this.settings.username,
       password: this.settings.password,
+      dbName: this.settings.dbName,
     };
   }
 

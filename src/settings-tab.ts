@@ -44,6 +44,20 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName('Database name')
+      .setDesc('CouchDB database. Override only for tests or per-vault setups.')
+      .addText((text) =>
+        text
+          .setPlaceholder('agentage-memory')
+          .setValue(this.plugin.settings.dbName)
+          .onChange(async (value) => {
+            this.plugin.settings.dbName = value.trim() || 'agentage-memory';
+            await this.plugin.saveSettings();
+            this.plugin.startReplication();
+          })
+      );
+
+    new Setting(containerEl)
       .setName('Password')
       .setDesc('CouchDB password (stored in plaintext data.json — local dev only).')
       .addText((text) => {
