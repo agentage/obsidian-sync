@@ -1,4 +1,5 @@
 /** Minimal CouchDB test helpers — Node-side, no Obsidian dependency. */
+import { randomBytes } from 'node:crypto';
 
 const URL = process.env.COUCHDB_URL ?? 'http://localhost:5984';
 const USER = process.env.COUCHDB_USER ?? 'admin';
@@ -63,6 +64,26 @@ export async function putDoc(id: string, content: string): Promise<string> {
   });
   if (res.status !== 201) throw new Error(`putDoc ${id}: HTTP ${res.status} ${await res.text()}`);
   return ((await res.json()) as { rev: string }).rev;
+}
+
+/**
+ * Inject a competing revision so a doc has two generation-1 leaves — a real
+ * CouchDB conflict, the same shape two clients editing at once would produce.
+ * `new_edits: false` lets us write an arbitrary sibling rev directly. Requires
+ * the doc to already exist at generation 1 (the plugin's first put).
+ */
+export async function injectConflict(id: string, content: string): Promise<void> {
+  const rev = `1-${randomBytes(16).toString('hex')}`;
+  const res = await couch(`/${DB}/_bulk_docs`, {
+    method: 'POST',
+    body: JSON.stringify({
+      new_edits: false,
+      docs: [{ _id: id, _rev: rev, content, mtime: Date.now() }],
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`injectConflict ${id}: HTTP ${res.status} ${await res.text()}`);
+  }
 }
 
 /** Delete a doc in CouchDB (a tombstone the plugin should route to trash). */
