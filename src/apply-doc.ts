@@ -1,5 +1,6 @@
 import type { EchoSuppress } from './echo-suppress';
 import type { MemoryDoc } from './pouch';
+import type { VaultNote } from './seed';
 
 /** Opaque handle to a vault file; the concrete type is the gateway's concern. */
 export type VaultFile = unknown;
@@ -19,6 +20,8 @@ export interface VaultGateway {
   create(path: string, content: string): Promise<void>;
   /** Create the parent folder for `path` if it's missing (no-op at root). */
   ensureParentFolder(path: string): Promise<void>;
+  /** Every markdown note in the vault, for the initial seed diff. */
+  listNotes(): Promise<VaultNote[]>;
 }
 
 /**

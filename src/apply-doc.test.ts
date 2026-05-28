@@ -41,6 +41,9 @@ function fakeVault(initial: Record<string, string> = {}) {
         ops.push(`folder:${parent}`);
       }
     },
+    async listNotes() {
+      return [...files.values()].map((f) => ({ path: f.path, content: f.content, mtime: 0 }));
+    },
   };
 
   return { gateway, files, folders, ops };

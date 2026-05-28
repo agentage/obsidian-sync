@@ -49,6 +49,19 @@ export async function destroyLocalDb(): Promise<void> {
   }
 }
 
+/** All notes currently in a PouchDB, keyed by `_id` (vault path). Used by the
+ * seed pass to diff the vault against the replica without N round-trips. */
+export async function getAllLocalDocs(
+  db: PouchDB.Database<MemoryDoc>
+): Promise<Map<string, MemoryDoc>> {
+  const result = await db.allDocs({ include_docs: true });
+  const map = new Map<string, MemoryDoc>();
+  for (const row of result.rows) {
+    if (row.doc) map.set(row.id, row.doc);
+  }
+  return map;
+}
+
 function remoteUrl(creds: PushCreds): string {
   return `${creds.serverUrl.replace(/\/+$/, '')}/${creds.dbName}`;
 }

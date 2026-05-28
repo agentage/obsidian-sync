@@ -31,6 +31,16 @@ export function obsidianVaultGateway(app: App): VaultGateway {
         await app.vault.createFolder(parent).catch(() => {});
       }
     },
+    async listNotes() {
+      const files = app.vault.getMarkdownFiles();
+      return Promise.all(
+        files.map(async (file) => ({
+          path: file.path,
+          content: await app.vault.cachedRead(file),
+          mtime: file.stat.mtime,
+        }))
+      );
+    },
   };
   return gateway;
 }
