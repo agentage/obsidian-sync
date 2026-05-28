@@ -2,8 +2,11 @@ import { Notice, Plugin, TFile, setIcon } from 'obsidian';
 import { DEFAULT_SETTINGS, type AgentageMemorySettings } from './settings';
 import {
   destroyLocalDb,
+  getAllLocalDocs,
+  getLocalDb,
   pushNoteViaPouch,
   startContinuousSync,
+  upsertNote,
   type PushCreds,
   type ReplicationHandle,
   type SyncChange,
@@ -13,6 +16,7 @@ import { statusDisplay, type StatusState } from './status';
 import { createEchoSuppress } from './echo-suppress';
 import { applyDocToVault, type VaultGateway } from './apply-doc';
 import { obsidianVaultGateway } from './obsidian-vault-gateway';
+import { notesToSeed } from './seed';
 import { AgentageMemorySettingTab } from './settings-tab';
 import { describeErr } from './errors';
 import { handleNoteChange, handleNoteDelete, handleNoteRename } from './vault-events';
@@ -27,6 +31,7 @@ export default class AgentageMemoryPlugin extends Plugin {
   private statusBar: HTMLElement | null = null;
   private readonly echo = createEchoSuppress();
   private gateway: VaultGateway | null = null;
+  private layoutReady = false;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -55,7 +60,40 @@ export default class AgentageMemoryPlugin extends Plugin {
     this.registerVaultEvents();
     this.startReplication();
 
+    // Obsidian replays a `create` event for every existing file on vault load.
+    // We skip that storm (see registerVaultEvents) and instead seed once the
+    // layout is ready — only pushing notes the replica is missing or stale on,
+    // rather than re-putting the whole vault on every launch.
+    this.app.workspace.onLayoutReady(() => {
+      this.layoutReady = true;
+      void this.seedVault();
+    });
+
     console.log('[Agentage Memory] loaded');
+  }
+
+  /**
+   * Push pre-existing vault notes into the local replica so they replicate up.
+   * The vault watcher's `create` events are ignored on load (Obsidian fires one
+   * per existing file), so without this an already-populated vault — or one
+   * enabled after startup — would never reach the cloud. Only missing/newer
+   * notes are upserted, so re-running on each launch is cheap and idempotent.
+   */
+  private async seedVault(): Promise<void> {
+    if (!this.gateway) return;
+    try {
+      const db = getLocalDb();
+      const notes = await this.gateway.listNotes();
+      const todo = notesToSeed(notes, await getAllLocalDocs(db));
+      for (const note of todo) {
+        await upsertNote(db, note.path, note.content, note.mtime);
+      }
+      if (todo.length) {
+        console.log(`[Agentage Memory] seeded ${todo.length} existing note(s) to local replica`);
+      }
+    } catch (err) {
+      console.error('[Agentage Memory] seedVault failed:', describeErr(err));
+    }
   }
 
   async onunload(): Promise<void> {
@@ -102,6 +140,9 @@ export default class AgentageMemoryPlugin extends Plugin {
     );
     this.registerEvent(
       this.app.vault.on('create', (file) => {
+        // Obsidian replays `create` for every existing file on vault load.
+        // Skip that storm — `seedVault` handles pre-existing notes once.
+        if (!this.layoutReady) return;
         if (file instanceof TFile && file.extension === 'md') {
           void handleNoteChange(this.app, this.echo, file);
         }

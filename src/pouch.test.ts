@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import PouchDB from 'pouchdb';
 import memoryAdapter from 'pouchdb-adapter-memory';
-import { removeNote, upsertNote, type MemoryDoc } from './pouch';
+import { getAllLocalDocs, removeNote, upsertNote, type MemoryDoc } from './pouch';
 
 PouchDB.plugin(memoryAdapter);
 
@@ -107,6 +107,35 @@ describe('PouchDB.sync (engine the plugin rides on)', () => {
       conflicts: true,
     })) as PouchDB.Core.Document<MemoryDoc> & { _conflicts?: string[] };
     expect(withConflicts._conflicts?.length).toBe(1);
+  });
+});
+
+describe('getAllLocalDocs', () => {
+  let db: PouchDB.Database<MemoryDoc>;
+  beforeEach(() => {
+    db = memDb(`test-alldocs-${uniq()}`);
+  });
+  afterEach(async () => {
+    await db.destroy();
+  });
+
+  it('returns an empty map for an empty database', async () => {
+    expect((await getAllLocalDocs(db)).size).toBe(0);
+  });
+
+  it('maps every doc by _id with content + mtime intact', async () => {
+    await upsertNote(db, 'a.md', 'A', 1);
+    await upsertNote(db, 'sub/b.md', 'B', 2);
+    const map = await getAllLocalDocs(db);
+    expect(map.size).toBe(2);
+    expect(map.get('a.md')?.content).toBe('A');
+    expect(map.get('sub/b.md')?.mtime).toBe(2);
+  });
+
+  it('omits tombstoned docs', async () => {
+    await upsertNote(db, 'gone.md', 'x', 1);
+    await removeNote(db, 'gone.md');
+    expect((await getAllLocalDocs(db)).has('gone.md')).toBe(false);
   });
 });
 
