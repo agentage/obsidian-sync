@@ -5,6 +5,7 @@ import {
   getAllLocalDocs,
   getLocalDb,
   pushNoteViaPouch,
+  resolveConflictedDoc,
   startContinuousSync,
   upsertNote,
   type PushCreds,
@@ -17,6 +18,7 @@ import { createEchoSuppress } from './echo-suppress';
 import { applyDocToVault, type VaultGateway } from './apply-doc';
 import { obsidianVaultGateway } from './obsidian-vault-gateway';
 import { notesToSeed } from './seed';
+import { conflictSidecarPath } from './conflict';
 import { AgentageMemorySettingTab } from './settings-tab';
 import { describeErr } from './errors';
 import { handleNoteChange, handleNoteDelete, handleNoteRename } from './vault-events';
@@ -196,9 +198,33 @@ export default class AgentageMemoryPlugin extends Plugin {
     if (info.direction !== 'pull' || !this.gateway) return;
     const gateway = this.gateway;
     for (const doc of info.docs) {
-      void applyDocToVault(gateway, doc, this.echo).catch((err) =>
-        console.error('[Agentage Memory] applyDocToVault failed', doc._id, err)
+      void this.applyPulledDoc(gateway, doc._id);
+    }
+  }
+
+  /**
+   * Apply a pulled doc to the vault by its *winning* revision (read from the
+   * local replica), never the change-feed body — under a conflict that body
+   * can be the loser. Concurrent-edit losers are preserved as sidecar notes
+   * (locked rule #3: keep both), created *without* echo suppression so the
+   * watcher pushes them upstream — every device ends up with both edits.
+   */
+  private async applyPulledDoc(gateway: VaultGateway, id: string): Promise<void> {
+    try {
+      const { deleted, content, losers } = await resolveConflictedDoc(getLocalDb(), id);
+      await applyDocToVault(
+        gateway,
+        deleted ? { _id: id, _deleted: true } : { _id: id, content },
+        this.echo
       );
+      for (const loser of losers) {
+        const path = conflictSidecarPath(id, loser.rev);
+        if (!gateway.getFile(path)) {
+          await gateway.create(path, loser.content);
+        }
+      }
+    } catch (err) {
+      console.error('[Agentage Memory] applyPulledDoc failed', id, err);
     }
   }
 

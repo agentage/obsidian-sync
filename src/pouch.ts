@@ -123,6 +123,59 @@ export async function removeNote(
   }
 }
 
+/** A losing revision's identity + body, surfaced so the caller can preserve it. */
+export interface ConflictLoser {
+  rev: string;
+  content: string;
+}
+
+/** The authoritative state of a doc after PouchDB picked a conflict winner. */
+export interface DocResolution {
+  /** True when the winning revision is a tombstone (the note is deleted). */
+  deleted: boolean;
+  /** The winning revision's body (empty when deleted). */
+  content: string;
+  /** Losing revisions, already removed from the local replica. */
+  losers: ConflictLoser[];
+}
+
+/**
+ * Resolve a doc to what should actually be in the vault. The replication
+ * `change` feed reports whichever revision just arrived, which under a
+ * conflict can be the *loser* — so we never trust that body. Instead we read
+ * the local replica's chosen winner here, and for each losing branch we grab
+ * its body (for a sidecar) then remove that leaf — clearing the conflict and
+ * replicating the resolution so other clients don't each re-surface it.
+ *
+ * Note: a delete-vs-edit conflict where the delete wins surfaces as `deleted`
+ * with no losers — the edit branch is not preserved. Rare; deferred for v1.
+ */
+export async function resolveConflictedDoc(
+  db: PouchDB.Database<MemoryDoc>,
+  id: string
+): Promise<DocResolution> {
+  let winner: MemoryDoc & { _conflicts?: string[] };
+  try {
+    winner = await db.get(id, { conflicts: true });
+  } catch (err) {
+    if ((err as { status?: number } | null)?.status === 404) {
+      return { deleted: true, content: '', losers: [] };
+    }
+    throw err;
+  }
+  const losers: ConflictLoser[] = [];
+  for (const rev of winner._conflicts ?? []) {
+    const doc = await db.get(id, { rev });
+    losers.push({ rev, content: doc.content ?? '' });
+    // Tolerate a concurrent resolution already having removed this leaf.
+    await db.remove(id, rev).catch((err) => {
+      const status = (err as { status?: number } | null)?.status;
+      if (status !== 404 && status !== 409) throw err;
+    });
+  }
+  return { deleted: false, content: winner.content ?? '', losers };
+}
+
 /**
  * Push a vault note to CouchDB via the local PouchDB.
  * 1. Upsert to the local DB.

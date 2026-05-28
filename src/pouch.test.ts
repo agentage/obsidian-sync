@@ -9,7 +9,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import PouchDB from 'pouchdb';
 import memoryAdapter from 'pouchdb-adapter-memory';
-import { getAllLocalDocs, removeNote, upsertNote, type MemoryDoc } from './pouch';
+import {
+  getAllLocalDocs,
+  removeNote,
+  resolveConflictedDoc,
+  upsertNote,
+  type MemoryDoc,
+} from './pouch';
 
 PouchDB.plugin(memoryAdapter);
 
@@ -185,5 +191,62 @@ describe('rename via remove + upsert (two-way sync semantics)', () => {
     await expect(remote.get('old.md')).rejects.toMatchObject({ status: 404 });
     const renamed = await remote.get('new.md');
     expect(renamed.content).toBe('body');
+  });
+});
+
+describe('resolveConflictedDoc', () => {
+  let local: PouchDB.Database<MemoryDoc>;
+  beforeEach(() => {
+    local = memDb(`test-conflict-${uniq()}`);
+  });
+  afterEach(async () => {
+    await local.destroy();
+  });
+
+  /** Inject a competing generation-1 root — the shape a second client (or the
+   * E2E's `injectConflict`) produces. The winner is whichever rev sorts higher,
+   * which is independent of which body arrived last in the change feed. */
+  async function injectSiblingConflict(loserContent: string, siblingContent: string) {
+    await local.put({ _id: 'd.md', content: loserContent, mtime: 1 });
+    await local.bulkDocs(
+      [{ _id: 'd.md', _rev: '1-ffffffffffffffffffffffffffffffff', content: siblingContent }],
+      { new_edits: false }
+    );
+  }
+
+  it('returns the WINNER body + the losing branch, regardless of arrival order', async () => {
+    // The fixed all-f rev always wins, so the first-written body is the loser —
+    // exactly the case the old change-feed-body approach got wrong.
+    await injectSiblingConflict('LOSES', 'WINS');
+    const res = await resolveConflictedDoc(local, 'd.md');
+    expect(res.deleted).toBe(false);
+    expect(res.content).toBe('WINS');
+    expect(res.losers.map((l) => l.content)).toEqual(['LOSES']);
+  });
+
+  it('clears the conflict after resolving', async () => {
+    await injectSiblingConflict('LOSES', 'WINS');
+    await resolveConflictedDoc(local, 'd.md');
+    const resolved = (await local.get('d.md', { conflicts: true })) as MemoryDoc & {
+      _conflicts?: string[];
+    };
+    expect(resolved._conflicts ?? []).toHaveLength(0);
+  });
+
+  it('reports an unconflicted doc as its own content with no losers', async () => {
+    await upsertNote(local, 'clean.md', 'only me', 1);
+    expect(await resolveConflictedDoc(local, 'clean.md')).toEqual({
+      deleted: false,
+      content: 'only me',
+      losers: [],
+    });
+  });
+
+  it('reports a missing/deleted doc as deleted', async () => {
+    expect(await resolveConflictedDoc(local, 'ghost.md')).toEqual({
+      deleted: true,
+      content: '',
+      losers: [],
+    });
   });
 });
