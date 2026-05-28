@@ -1,0 +1,69 @@
+name: Release
+
+# Obsidian convention: the GitHub Release tag must equal manifest.json `version`
+# with NO `v` prefix (BRAT + the community store look the plugin up by that exact
+# tag). `.npmrc` sets `tag-version-prefix=` so `npm version` produces bare tags;
+# `git push --follow-tags` then fires this workflow.
+on:
+  push:
+    tags:
+      - '*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 📦 Build & publish plugin release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify tag matches manifest version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          MANIFEST=$(node -p "require('./manifest.json').version")
+          if [ "$TAG" != "$MANIFEST" ]; then
+            echo "::error::Release tag '$TAG' does not match manifest.json version '$MANIFEST'. Obsidian requires they be identical." >&2
+            exit 1
+          fi
+          echo "tag and manifest agree on $TAG"
+
+      - name: Build plugin
+        run: npm run build
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            **Agentage Memory ${{ github.ref_name }}** — the shared memory layer for every AI.
+
+            ### Install (manual)
+            Download `main.js`, `manifest.json`, and `styles.css` below into
+            `<your-vault>/.obsidian/plugins/agentage-memory/`, then enable
+            **Agentage Memory** under Settings → Community plugins.
+
+            ### Install (BRAT)
+            Add `agentage/obsidian-memory` in the BRAT plugin.
+
+            See the [README](https://github.com/${{ github.repository }}#readme) for setup and privacy details.
+          files: |
+            main.js
+            manifest.json
+            styles.css
+          fail_on_unmatched_files: true
