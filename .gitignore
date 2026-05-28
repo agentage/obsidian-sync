@@ -6,4 +6,5 @@ data.json
 .env
 test-results/
 playwright-report/
+coverage/
 .pr-body-tmp.md

@@ -11,7 +11,8 @@ import {
 import { obsidianFetchForPouch } from './obsidian-fetch';
 import { statusDisplay, type StatusState } from './status';
 import { createEchoSuppress } from './echo-suppress';
-import { applyDocToVault } from './apply-doc';
+import { applyDocToVault, type VaultGateway } from './apply-doc';
+import { obsidianVaultGateway } from './obsidian-vault-gateway';
 import { AgentageMemorySettingTab } from './settings-tab';
 import { describeErr } from './errors';
 import { handleNoteChange, handleNoteDelete, handleNoteRename } from './vault-events';
@@ -25,10 +26,12 @@ export default class AgentageMemoryPlugin extends Plugin {
   private replication: ReplicationHandle | null = null;
   private statusBar: HTMLElement | null = null;
   private readonly echo = createEchoSuppress();
+  private gateway: VaultGateway | null = null;
 
   async onload(): Promise<void> {
     await this.loadSettings();
 
+    this.gateway = obsidianVaultGateway(this.app);
     this.statusBar = this.addStatusBarItem();
     this.setStatus('idle');
 
@@ -149,9 +152,10 @@ export default class AgentageMemoryPlugin extends Plugin {
       info.direction,
       `read=${info.docsRead} written=${info.docsWritten}`
     );
-    if (info.direction !== 'pull') return;
+    if (info.direction !== 'pull' || !this.gateway) return;
+    const gateway = this.gateway;
     for (const doc of info.docs) {
-      void applyDocToVault(this.app, doc, this.echo).catch((err) =>
+      void applyDocToVault(gateway, doc, this.echo).catch((err) =>
         console.error('[Agentage Memory] applyDocToVault failed', doc._id, err)
       );
     }
