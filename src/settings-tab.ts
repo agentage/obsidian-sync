@@ -1,12 +1,12 @@
-import { Notice, PluginSettingTab, Setting, requestUrl, type App } from 'obsidian';
-import type AgentageMemoryPlugin from './main';
-import { normalizeServerUrl } from './settings';
+import { Notice, PluginSettingTab, Setting, requestUrl, type App, type Plugin } from 'obsidian';
 import { pingServer } from './connection';
+import type { SyncController } from './sync-controller';
 
 export class AgentageMemorySettingTab extends PluginSettingTab {
   constructor(
     app: App,
-    private readonly plugin: AgentageMemoryPlugin
+    plugin: Plugin,
+    private readonly core: SyncController
   ) {
     super(app, plugin);
   }
@@ -21,12 +21,8 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setPlaceholder('https://mcp.agentage.io')
-          .setValue(this.plugin.settings.serverUrl)
-          .onChange(async (value) => {
-            this.plugin.settings.serverUrl = normalizeServerUrl(value);
-            await this.plugin.saveSettings();
-            this.plugin.startReplication();
-          })
+          .setValue(this.core.getSettings().serverUrl)
+          .onChange((value) => this.core.setServerUrl(value))
       );
 
     new Setting(containerEl)
@@ -35,10 +31,8 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setPlaceholder('admin')
-          .setValue(this.plugin.getBasicCreds().username)
-          .onChange((value) => {
-            this.plugin.setUsername(value);
-          })
+          .setValue(this.core.getBasicCreds().username)
+          .onChange((value) => this.core.setUsername(value))
       );
 
     new Setting(containerEl)
@@ -47,12 +41,8 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setPlaceholder('agentage-memory')
-          .setValue(this.plugin.settings.dbName)
-          .onChange(async (value) => {
-            this.plugin.settings.dbName = value.trim() || 'agentage-memory';
-            await this.plugin.saveSettings();
-            this.plugin.startReplication();
-          })
+          .setValue(this.core.getSettings().dbName)
+          .onChange((value) => this.core.setDbName(value))
       );
 
     new Setting(containerEl)
@@ -61,10 +51,8 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
       .addText((text) => {
         text
           .setPlaceholder('agentage')
-          .setValue(this.plugin.getBasicCreds().password)
-          .onChange((value) => {
-            this.plugin.setPassword(value);
-          });
+          .setValue(this.core.getBasicCreds().password)
+          .onChange((value) => this.core.setPassword(value));
         text.inputEl.type = 'password';
       });
 
@@ -74,7 +62,7 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
       .addButton((btn) =>
         btn.setButtonText('Test').onClick(async () => {
           btn.setDisabled(true).setButtonText('Testing…');
-          const r = await pingServer(this.plugin.settings.serverUrl, async (u) => {
+          const r = await pingServer(this.core.getSettings().serverUrl, async (u) => {
             const res = await requestUrl({ url: u, method: 'GET', throw: false });
             return { status: res.status };
           });
