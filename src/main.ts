@@ -1,5 +1,6 @@
 import { Notice, Plugin } from 'obsidian';
 import { createSyncController, type SyncController } from './sync-controller';
+import { CALLBACK_ACTION, REDIRECT_URI, createAuthFlow } from './auth-flow';
 import type { SecretStore } from './credentials';
 import { AgentageMemorySettingTab } from './settings-tab';
 
@@ -28,6 +29,21 @@ export default class AgentageMemoryPlugin extends Plugin {
     });
     this.#core = core;
 
+    const auth = createAuthFlow({
+      secrets,
+      config: () => {
+        const s = core.getSettings();
+        return { authBase: s.authBase, anonKey: s.anonKey, redirectUri: REDIRECT_URI };
+      },
+      notify: (message) => new Notice(message),
+      openExternal: (url) => window.open(url, '_blank'),
+      now: () => Date.now(),
+    });
+    // GoTrue redirects to obsidian://agentage-memory-cb?code=… after sign-in.
+    this.registerObsidianProtocolHandler(CALLBACK_ACTION, (params) => {
+      void auth.handleCallback(params);
+    });
+
     this.addRibbonIcon(
       RIBBON_ICON,
       'Agentage Memory',
@@ -39,7 +55,17 @@ export default class AgentageMemoryPlugin extends Plugin {
       name: 'Push current note to Agentage Memory',
       callback: () => core.pushCurrentNote(),
     });
-    this.addSettingTab(new AgentageMemorySettingTab(this.app, this, core));
+    this.addCommand({
+      id: 'sign-in',
+      name: 'Sign in to Agentage',
+      callback: () => auth.startSignIn(),
+    });
+    this.addCommand({
+      id: 'sign-out',
+      name: 'Sign out of Agentage',
+      callback: () => auth.signOut(),
+    });
+    this.addSettingTab(new AgentageMemorySettingTab(this.app, this, core, auth));
 
     await core.start();
   }

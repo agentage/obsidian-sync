@@ -42,7 +42,9 @@ versions.json          # plugin version -> minAppVersion map
 esbuild.config.mjs     # Bundler (TS -> cjs main.js)
 ```
 
-Layering: **Obsidian-coupled** (`main`, `sync-controller`, `settings-tab`, `vault-watcher`, `status-bar`, `obsidian-vault-gateway`, `obsidian-fetch`) + **HTTP-coupled** (`replication`) are coverage-excluded / E2E-covered; everything else is dependency-free and unit-tested.
+Layering: **Obsidian-coupled** (`main`, `sync-controller`, `settings-tab`, `vault-watcher`, `status-bar`, `obsidian-vault-gateway`, `obsidian-fetch`, `auth-flow`) + **HTTP-coupled** (`replication`) are coverage-excluded / E2E-covered; everything else is dependency-free and unit-tested.
+
+**Auth.** OAuth sign-in (GoTrue, PKCE S256, no DCR): `pkce.ts` (verifier/challenge/authorize-URL — tested), `oauth.ts` (token exchange/refresh over an injected `HttpPost` — tested), `token-store.ts` (access/refresh tokens in `app.secretStorage` — tested), `auth-flow.ts` (Obsidian/Electron glue: `requestUrl`, external browser, `obsidian://agentage-memory-cb` callback). Sign-in establishes the Agentage *identity*; replication still rides the local-dev Basic creds until the backend CouchDB-credential bootstrap lands.
 
 **Dependency injection (factory pattern, no container).** `createSyncController(deps)` takes a single typed `SyncDeps` object — Obsidian capabilities (`app`, `secrets`, `load`/`save`, `registerEvent`, `statusBar`) — and returns a singleton `SyncController` interface. All state lives in closure variables, not instance fields. Obsidian-coupled code stays in `main.ts` / `obsidian-vault-gateway.ts`; `sync-controller.ts` and the rest of `src/` stay dependency-free and unit-testable. Mirrors the house Service-Provider DI pattern in `~/projects/CLAUDE.md` (factory + singleton + deps-as-params).
 

@@ -170,6 +170,17 @@ export function createSyncController(deps: SyncDeps): SyncController {
     restartReplication();
   };
 
+  // Auth config feeds the OAuth flow, not replication — persist without restart.
+  const setAuthBase = (value: string): void => {
+    settings = { ...settings, authBase: normalizeServerUrl(value) };
+    void persist();
+  };
+
+  const setAnonKey = (value: string): void => {
+    settings = { ...settings, anonKey: value.trim() };
+    void persist();
+  };
+
   return {
     start,
     stop,
@@ -180,5 +191,7 @@ export function createSyncController(deps: SyncDeps): SyncController {
     setPassword,
     setServerUrl,
     setDbName,
+    setAuthBase,
+    setAnonKey,
   };
 }
