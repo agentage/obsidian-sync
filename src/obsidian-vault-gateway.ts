@@ -28,6 +28,7 @@ export function obsidianVaultGateway(app: App): VaultGateway {
     async ensureParentFolder(path) {
       const parent = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
       if (parent && !app.vault.getAbstractFileByPath(parent)) {
+        // Folder may already exist or be created by a concurrent sync — safe to ignore.
         await app.vault.createFolder(parent).catch(() => {});
       }
     },
