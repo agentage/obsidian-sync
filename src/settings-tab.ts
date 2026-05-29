@@ -31,15 +31,13 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Username')
-      .setDesc('CouchDB username (local dev only — moves to OAuth + secret storage later).')
+      .setDesc('CouchDB username — local dev only. Stored in encrypted secret storage.')
       .addText((text) =>
         text
           .setPlaceholder('admin')
-          .setValue(this.plugin.settings.username)
-          .onChange(async (value) => {
-            this.plugin.settings.username = value.trim();
-            await this.plugin.saveSettings();
-            this.plugin.startReplication();
+          .setValue(this.plugin.getBasicCreds().username)
+          .onChange((value) => {
+            this.plugin.setUsername(value);
           })
       );
 
@@ -59,15 +57,13 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Password')
-      .setDesc('CouchDB password (stored in plaintext data.json — local dev only).')
+      .setDesc('CouchDB password — local dev only. Stored in encrypted secret storage.')
       .addText((text) => {
         text
           .setPlaceholder('agentage')
-          .setValue(this.plugin.settings.password)
-          .onChange(async (value) => {
-            this.plugin.settings.password = value;
-            await this.plugin.saveSettings();
-            this.plugin.startReplication();
+          .setValue(this.plugin.getBasicCreds().password)
+          .onChange((value) => {
+            this.plugin.setPassword(value);
           });
         text.inputEl.type = 'password';
       });

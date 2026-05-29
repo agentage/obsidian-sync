@@ -1,5 +1,6 @@
 import { requestUrl } from 'obsidian';
-import type { PouchFetch, PushCreds } from './pouch';
+import type { PouchFetch } from './pouch';
+import type { AuthProvider } from './auth';
 
 function headersToObject(h: HeadersInit | undefined | null): Record<string, string> {
   if (!h) return {};
@@ -16,20 +17,20 @@ function headersToObject(h: HeadersInit | undefined | null): Record<string, stri
 
 /**
  * Wrap Obsidian's `requestUrl` to look like the browser `fetch` API and inject
- * Basic auth + a JSON `Content-Type` on every request. Auth has to live here
- * (rather than in PouchDB's `auth` constructor option) because that option
- * does not propagate to the live replication `_changes` feed in PouchDB 7+.
- * `requestUrl` runs in the Electron main process and bypasses CORS for us.
+ * the `AuthProvider`'s header + a JSON `Content-Type` on every request. Auth has
+ * to live here (rather than in PouchDB's `auth` constructor option) because that
+ * option does not propagate to the live replication `_changes` feed in PouchDB
+ * 7+. `requestUrl` runs in the Electron main process and bypasses CORS for us.
  */
-export function obsidianFetchForPouch(creds: PushCreds): PouchFetch {
-  const authHeader = 'Basic ' + btoa(`${creds.username}:${creds.password}`);
+export function obsidianFetchForPouch(auth: AuthProvider): PouchFetch {
   return async (input, init) => {
     const url = typeof input === 'string' ? input : input.toString();
     const method = init?.method ?? 'GET';
     const body = (init?.body as string) ?? undefined;
+    const authHeader = await auth.authHeader();
     const headers: Record<string, string> = {
       ...headersToObject(init?.headers),
-      Authorization: authHeader,
+      ...(authHeader ? { Authorization: authHeader } : {}),
     };
     if (body && !Object.keys(headers).some((k) => k.toLowerCase() === 'content-type')) {
       headers['Content-Type'] = 'application/json';
