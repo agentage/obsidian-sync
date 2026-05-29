@@ -14,9 +14,29 @@ export default class AgentageMemoryPlugin extends Plugin {
 
   async onload(): Promise<void> {
     const statusBar = this.addStatusBarItem();
+    // Defensive adapter: `app.secretStorage` is absent (e.g., headless CI with no
+    // OS keyring backend) or `getSecret` is async on some Obsidian builds. On
+    // either, fall through to legacy data.json creds via `resolveBasicCreds`
+    // rather than letting onload abort — without this, the status icon never
+    // renders and replication never starts.
     const secrets: SecretStore = {
-      get: (id) => this.app.secretStorage.getSecret(id),
-      set: (id, value) => this.app.secretStorage.setSecret(id, value),
+      get: (id) => {
+        try {
+          const v: unknown = this.app.secretStorage?.getSecret(id);
+          if (v instanceof Promise) return null;
+          return typeof v === 'string' ? v : null;
+        } catch {
+          return null;
+        }
+      },
+      set: (id, value) => {
+        try {
+          const r: unknown = this.app.secretStorage?.setSecret(id, value);
+          if (r instanceof Promise) void r.catch(() => undefined);
+        } catch {
+          /* secretStorage unavailable; the creds stay in-memory for this session */
+        }
+      },
     };
     const core = createSyncController({
       app: this.app,
