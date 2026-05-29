@@ -49,7 +49,7 @@
     "esbuild": "^0.28.0",
     "eslint": "^10.4.0",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-prettier": "^5.2.1",
+    "eslint-plugin-prettier": "^5.5.6",
     "obsidian": "latest",
     "pouchdb": "9.0.0",
     "pouchdb-adapter-memory": "9.0.0",
