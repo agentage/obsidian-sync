@@ -22,6 +22,7 @@ export default defineConfig({
       exclude: [
         '**/*.test.ts',
         'src/main.ts',
+        'src/sync-controller.ts',
         'src/pouch.ts',
         'src/obsidian-fetch.ts',
         'src/obsidian-vault-gateway.ts',
