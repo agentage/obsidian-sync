@@ -1,13 +1,21 @@
 name: Release
 
-# Obsidian convention: the GitHub Release tag must equal manifest.json `version`
-# with NO `v` prefix (BRAT + the community store look the plugin up by that exact
-# tag). `.npmrc` sets `tag-version-prefix=` so `npm version` produces bare tags;
-# `git push --follow-tags` then fires this workflow.
+# Two ways in:
+#  1. push a bare version tag (e.g. `0.1.1`) — the classic manual release. The
+#     tag already pins the version (Obsidian requires tag == manifest.json
+#     version; `.npmrc` sets `tag-version-prefix=` so `npm version` emits bare
+#     tags), and `git push --follow-tags` fires this workflow.
+#  2. repository_dispatch `release-plugin` (fired daily by agentage/e2e on a green
+#     nightly) or a manual workflow_dispatch — auto-bumps the patch version,
+#     commits + tags it back to master, then releases. Skips when there are no
+#     new commits since the last tag, so a green-but-unchanged night is a no-op.
 on:
   push:
     tags:
       - '*.*.*'
+  workflow_dispatch:
+  repository_dispatch:
+    types: [release-plugin]
 
 permissions:
   contents: write
@@ -21,6 +29,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -31,9 +41,39 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Verify tag matches manifest version
+      # Resolve the version to release. A tag push already carries it; a
+      # dispatch/manual run bumps patch (commit + tag back to master) unless
+      # there's nothing new since the last tag.
+      - name: Resolve release version
+        id: ver
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          LAST=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -n "$LAST" ] && [ "$(git rev-list -n1 "$LAST")" = "$(git rev-parse HEAD)" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "No new commits since tag $LAST — skipping release."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          npm version patch --no-git-tag-version >/dev/null
+          NEW=$(node -p "require('./package.json').version")
+          git add package.json package-lock.json manifest.json versions.json
+          git commit -m "chore(release): $NEW"
+          git tag "$NEW"
+          git push origin "HEAD:${GITHUB_REF#refs/heads/}" --follow-tags
+          echo "tag=$NEW" >> "$GITHUB_OUTPUT"
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "Releasing $NEW (was ${LAST:-none})."
+
+      - name: Verify tag matches manifest version
+        if: steps.ver.outputs.release == 'true'
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
           MANIFEST=$(node -p "require('./manifest.json').version")
           if [ "$TAG" != "$MANIFEST" ]; then
             echo "::error::Release tag '$TAG' does not match manifest.json version '$MANIFEST'. Obsidian requires they be identical." >&2
@@ -42,16 +82,18 @@ jobs:
           echo "tag and manifest agree on $TAG"
 
       - name: Build plugin
+        if: steps.ver.outputs.release == 'true'
         run: npm run build
 
       - name: Create GitHub Release
+        if: steps.ver.outputs.release == 'true'
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          prerelease: ${{ contains(steps.ver.outputs.tag, '-') }}
           body: |
-            **Agentage Memory ${{ github.ref_name }}** — the shared memory layer for every AI.
+            **Agentage Memory ${{ steps.ver.outputs.tag }}** — the shared memory layer for every AI.
 
             ### Install (manual)
             Download `main.js`, `manifest.json`, and `styles.css` below into
