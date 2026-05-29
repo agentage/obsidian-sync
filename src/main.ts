@@ -13,6 +13,16 @@ import {
   type SyncChange,
 } from './pouch';
 import { obsidianFetchForPouch } from './obsidian-fetch';
+import { basicAuthProvider, type AuthProvider } from './auth';
+import {
+  DEFAULT_BASIC_CREDS,
+  PASSWORD_SECRET,
+  USERNAME_SECRET,
+  resolveBasicCreds,
+  stripLegacyCreds,
+  type BasicCreds,
+  type SecretStore,
+} from './credentials';
 import { statusDisplay, type StatusState } from './status';
 import { createEchoSuppress } from './echo-suppress';
 import { applyDocToVault, type VaultGateway } from './apply-doc';
@@ -29,6 +39,7 @@ const RIBBON_ICON = 'refresh-cw';
 // is the one place we use a default export; everything else uses named exports.
 export default class AgentageMemoryPlugin extends Plugin {
   settings: AgentageMemorySettings = DEFAULT_SETTINGS;
+  private basicCreds: BasicCreds = DEFAULT_BASIC_CREDS;
   private replication: ReplicationHandle | null = null;
   private statusBar: HTMLElement | null = null;
   private readonly echo = createEchoSuppress();
@@ -105,18 +116,56 @@ export default class AgentageMemoryPlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const raw = ((await this.loadData()) as Record<string, unknown> | null) ?? {};
+    // Migrate any plaintext creds from a pre-secretStorage data.json into the
+    // secret store, seeding dev defaults when nothing is stored yet.
+    this.basicCreds = resolveBasicCreds(this.secretStore(), {
+      username: raw.username,
+      password: raw.password,
+    });
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, stripLegacyCreds(raw));
+    // Persist the stripped data.json so the plaintext creds don't linger.
+    if ('username' in raw || 'password' in raw) await this.saveSettings();
   }
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
   }
 
+  private secretStore(): SecretStore {
+    const ss = this.app.secretStorage;
+    return {
+      get: (id) => ss.getSecret(id),
+      set: (id, value) => ss.setSecret(id, value),
+    };
+  }
+
+  private authProvider(): AuthProvider {
+    return basicAuthProvider(this.basicCreds.username, this.basicCreds.password);
+  }
+
+  /** Current Basic creds (for the settings tab's local-dev fields). */
+  getBasicCreds(): BasicCreds {
+    return this.basicCreds;
+  }
+
+  /** Update a Basic credential in secret storage and restart replication. */
+  setUsername(value: string): void {
+    const username = value.trim();
+    this.basicCreds = { ...this.basicCreds, username };
+    this.app.secretStorage.setSecret(USERNAME_SECRET, username);
+    this.startReplication();
+  }
+
+  setPassword(value: string): void {
+    this.basicCreds = { ...this.basicCreds, password: value };
+    this.app.secretStorage.setSecret(PASSWORD_SECRET, value);
+    this.startReplication();
+  }
+
   private creds(): PushCreds {
     return {
       serverUrl: this.settings.serverUrl,
-      username: this.settings.username,
-      password: this.settings.password,
       dbName: this.settings.dbName,
     };
   }
@@ -169,20 +218,24 @@ export default class AgentageMemoryPlugin extends Plugin {
   startReplication(): void {
     this.stopReplication();
     try {
-      this.replication = startContinuousSync(this.creds(), obsidianFetchForPouch(this.creds()), {
-        onActive: () => this.setStatus('active'),
-        onPaused: (err) => {
-          if (err) {
-            console.warn('[Agentage Memory] paused with transient error:', describeErr(err));
-          }
-          this.setStatus('synced');
-        },
-        onChange: (info: SyncChange) => this.onSyncChange(info),
-        onError: (err) => {
-          console.error('[Agentage Memory] replication terminated:', describeErr(err));
-          this.setStatus('error');
-        },
-      });
+      this.replication = startContinuousSync(
+        this.creds(),
+        obsidianFetchForPouch(this.authProvider()),
+        {
+          onActive: () => this.setStatus('active'),
+          onPaused: (err) => {
+            if (err) {
+              console.warn('[Agentage Memory] paused with transient error:', describeErr(err));
+            }
+            this.setStatus('synced');
+          },
+          onChange: (info: SyncChange) => this.onSyncChange(info),
+          onError: (err) => {
+            console.error('[Agentage Memory] replication terminated:', describeErr(err));
+            this.setStatus('error');
+          },
+        }
+      );
     } catch (err) {
       console.error('[Agentage Memory] startReplication failed:', describeErr(err));
       this.setStatus('error');
@@ -252,7 +305,7 @@ export default class AgentageMemoryPlugin extends Plugin {
         file.path,
         content,
         file.stat.mtime,
-        obsidianFetchForPouch(this.creds())
+        obsidianFetchForPouch(this.authProvider())
       );
       const shortRev = rev.split('-')[0];
       new Notice(`Pushed: ${id} (rev ${shortRev})`);

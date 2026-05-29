@@ -14,8 +14,6 @@ export const LOCAL_DB_NAME = 'agentage-memory-local';
 
 export interface PushCreds {
   serverUrl: string;
-  username: string;
-  password: string;
   /** Remote CouchDB database name. */
   dbName: string;
 }
