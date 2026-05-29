@@ -29,13 +29,17 @@ npm version <x.y.z>  # Bump manifest.json + versions.json (Obsidian release prep
 
 ```
 src/
-├── main.ts          # Obsidian entry (Plugin lifecycle + settings tab)
-├── settings.ts      # Settings type, defaults, pure helpers (no Obsidian import)
-└── *.test.ts        # Vitest unit tests, colocated
-manifest.json        # Obsidian plugin manifest (id, version, minAppVersion)
-versions.json        # plugin version -> minAppVersion map
-esbuild.config.mjs   # Bundler (TS -> cjs main.js)
+├── main.ts            # Obsidian entry: thin Plugin adapter, wires deps into the controller
+├── sync-controller.ts # createSyncController closure — owns all sync state + logic
+├── settings.ts        # Settings type, defaults, pure helpers (no Obsidian import)
+├── settings-tab.ts    # PluginSettingTab UI, drives the controller
+└── *.test.ts          # Vitest unit tests, colocated
+manifest.json          # Obsidian plugin manifest (id, version, minAppVersion)
+versions.json          # plugin version -> minAppVersion map
+esbuild.config.mjs     # Bundler (TS -> cjs main.js)
 ```
+
+**Dependency injection (factory pattern, no container).** `createSyncController(deps)` takes a single typed `SyncDeps` object — Obsidian capabilities (`app`, `secrets`, `load`/`save`, `registerEvent`, `statusBar`) — and returns a singleton `SyncController` interface. All state lives in closure variables, not instance fields. Obsidian-coupled code stays in `main.ts` / `obsidian-vault-gateway.ts`; `sync-controller.ts` and the rest of `src/` stay dependency-free and unit-testable. Mirrors the house Service-Provider DI pattern in `~/projects/CLAUDE.md` (factory + singleton + deps-as-params).
 
 ## Plugin-specific conventions (Obsidian platform)
 

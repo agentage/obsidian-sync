@@ -146,7 +146,7 @@ export function createSyncController(deps: SyncDeps): SyncController {
         }
       }
     } catch (err) {
-      console.error('[Agentage Memory] applyPulledDoc failed', id, err);
+      console.error('[Agentage Memory] applyPulledDoc failed', id, describeErr(err));
     }
   };
 
@@ -263,7 +263,9 @@ export function createSyncController(deps: SyncDeps): SyncController {
 
   const stop = async (): Promise<void> => {
     stopReplication();
-    await destroyLocalDb().catch((err) => console.warn('[Agentage Memory] destroyLocalDb', err));
+    await destroyLocalDb().catch((err) =>
+      console.warn('[Agentage Memory] destroyLocalDb', describeErr(err))
+    );
     console.log('[Agentage Memory] unloaded');
   };
 

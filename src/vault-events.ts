@@ -1,5 +1,6 @@
 import type { App, TFile } from 'obsidian';
 import { getLocalDb, removeNote, upsertNote } from './pouch';
+import { describeErr } from './errors';
 import type { EchoSuppress } from './echo-suppress';
 
 /**
@@ -16,7 +17,7 @@ export async function handleNoteChange(app: App, echo: EchoSuppress, file: TFile
     const content = await app.vault.read(file);
     await upsertNote(getLocalDb(), file.path, content, file.stat.mtime);
   } catch (err) {
-    console.error('[Agentage Memory] auto-upsert failed', file.path, err);
+    console.error('[Agentage Memory] auto-upsert failed', file.path, describeErr(err));
   }
 }
 
@@ -25,7 +26,7 @@ export async function handleNoteDelete(echo: EchoSuppress, path: string): Promis
   try {
     await removeNote(getLocalDb(), path);
   } catch (err) {
-    console.error('[Agentage Memory] auto-delete failed', path, err);
+    console.error('[Agentage Memory] auto-delete failed', path, describeErr(err));
   }
 }
 
@@ -47,6 +48,12 @@ export async function handleNoteRename(
     await removeNote(db, oldPath);
     await upsertNote(db, file.path, content, file.stat.mtime);
   } catch (err) {
-    console.error('[Agentage Memory] auto-rename failed', oldPath, '->', file.path, err);
+    console.error(
+      '[Agentage Memory] auto-rename failed',
+      oldPath,
+      '->',
+      file.path,
+      describeErr(err)
+    );
   }
 }
