@@ -30,23 +30,28 @@ npm version <x.y.z>  # Bump manifest.json + versions.json (Obsidian release prep
 ```
 src/
 ├── main.ts            # Obsidian entry: thin Plugin adapter, wires deps into the controller
-├── sync-controller.ts # createSyncController closure — owns all sync state + logic
+├── sync-controller.ts # createSyncController closure — owns sync state + lifecycle
 ├── settings.ts        # Settings type, defaults, pure helpers (no Obsidian import)
 ├── settings-tab.ts    # PluginSettingTab UI, drives the controller
+├── pouch.ts           # local PouchDB store (testable) ── replication.ts # remote CouchDB (E2E)
+├── inbound.ts         # apply-pulled + seed logic (Obsidian-free, testable)
+├── vault-watcher.ts   # vault→cloud event wiring ── status-bar.ts # status-bar render
 └── *.test.ts          # Vitest unit tests, colocated
 manifest.json          # Obsidian plugin manifest (id, version, minAppVersion)
 versions.json          # plugin version -> minAppVersion map
 esbuild.config.mjs     # Bundler (TS -> cjs main.js)
 ```
 
+Layering: **Obsidian-coupled** (`main`, `sync-controller`, `settings-tab`, `vault-watcher`, `status-bar`, `obsidian-vault-gateway`, `obsidian-fetch`) + **HTTP-coupled** (`replication`) are coverage-excluded / E2E-covered; everything else is dependency-free and unit-tested.
+
 **Dependency injection (factory pattern, no container).** `createSyncController(deps)` takes a single typed `SyncDeps` object — Obsidian capabilities (`app`, `secrets`, `load`/`save`, `registerEvent`, `statusBar`) — and returns a singleton `SyncController` interface. All state lives in closure variables, not instance fields. Obsidian-coupled code stays in `main.ts` / `obsidian-vault-gateway.ts`; `sync-controller.ts` and the rest of `src/` stay dependency-free and unit-testable. Mirrors the house Service-Provider DI pattern in `~/projects/CLAUDE.md` (factory + singleton + deps-as-params).
 
 ## Plugin-specific conventions (Obsidian platform)
 
-- **Entry is a DEFAULT export.** `main.ts` exports the `Plugin` subclass as default — Obsidian requires it. This is the *only* default export; everything else uses **named exports** (project standard).
+- **Entry is a DEFAULT export.** `main.ts` exports the `Plugin` subclass as default — Obsidian requires it. This is the _only_ default export; everything else uses **named exports** (project standard).
 - **Build output is CommonJS.** esbuild bundles to `main.js` (`format: 'cjs'`); `obsidian`/`electron`/node builtins are externals. `main.js` is git-ignored and attached to GitHub Releases.
 - **`minAppVersion` ≥ 1.11.4** — required for `app.secretStorage` (OAuth tokens go there, never `data.json`, which is plaintext).
-- **`isDesktopOnly: false`** — PouchDB/IndexedDB works on mobile; keep the flag (flipping it later re-triggers store review). Mobile *testing* is deferred for v1.
+- **`isDesktopOnly: false`** — PouchDB/IndexedDB works on mobile; keep the flag (flipping it later re-triggers store review). Mobile _testing_ is deferred for v1.
 - **Pure logic out of `main.ts`.** Code that imports `obsidian` can't be unit-tested (no runtime in Vitest); keep testable logic in dependency-free modules (e.g. `settings.ts`).
 - **Store compliance:** `normalizePath()` on every vault path; **no client-side telemetry**; README must disclose network hosts + account/payment requirements. See the build plan in `agentage-memory/research/obsidian-plugin/plan.md`.
 

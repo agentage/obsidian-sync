@@ -1,5 +1,5 @@
 import { requestUrl } from 'obsidian';
-import type { PouchFetch } from './pouch';
+import type { PouchFetch } from './replication';
 import type { AuthProvider } from './auth';
 
 function headersToObject(h: HeadersInit | undefined | null): Record<string, string> {

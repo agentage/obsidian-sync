@@ -15,15 +15,20 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
-      // Files that need the Obsidian runtime (App, TFile, PluginSettingTab,
-      // requestUrl, …) — exercised via the E2E suite, not unit tests.
-      // pouch.ts wraps pouchdb-browser/IndexedDB; the engine itself is
-      // covered by pouch.test.ts against pouchdb-adapter-memory.
+      // Excluded: files that need the Obsidian runtime (App, TFile,
+      // PluginSettingTab, requestUrl, setIcon, …) or a live CouchDB — exercised
+      // by the E2E suite, not unit tests. The local PouchDB store (pouch.ts) and
+      // the inbound apply/seed logic (inbound.ts) are dependency-free and unit-
+      // tested against pouchdb-adapter-memory + a fake gateway.
       exclude: [
         '**/*.test.ts',
+        '**/*.types.ts',
         'src/main.ts',
         'src/sync-controller.ts',
-        'src/pouch.ts',
+        'src/replication.ts',
+        'src/status-bar.ts',
+        'src/vault-watcher.ts',
+        'src/push-note.ts',
         'src/obsidian-fetch.ts',
         'src/obsidian-vault-gateway.ts',
         'src/settings-tab.ts',

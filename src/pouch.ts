@@ -1,22 +1,12 @@
 /**
- * PouchDB-backed sync layer. Maintains a single local PouchDB (IndexedDB) and
- * pushes notes to a remote CouchDB via one-shot replication. Two-way live
- * replication + the vault watcher land in follow-up PRs.
- *
- * Architecture pins (see /home/vreshch/agentage-memory/research/obsidian-plugin/plan.md):
- *   - one-doc-per-note: `_id` = vault path, body = `{ content, mtime }`.
- *   - CORS is bypassed by giving PouchDB a `fetch` impl that wraps Obsidian's
- *     `requestUrl` (no CORS headers required on the CouchDB side at request time).
+ * Local PouchDB store (IndexedDB-backed). One doc per note: `_id` = vault path,
+ * body = `{ content, mtime }`. These ops run against the in-process replica and
+ * are unit-tested with `pouchdb-adapter-memory`; the remote/HTTP replication
+ * layer lives in `replication.ts`.
  */
 import PouchDB from 'pouchdb-browser';
 
 export const LOCAL_DB_NAME = 'agentage-memory-local';
-
-export interface PushCreds {
-  serverUrl: string;
-  /** Remote CouchDB database name. */
-  dbName: string;
-}
 
 export interface MemoryDoc {
   _id: string;
@@ -26,8 +16,8 @@ export interface MemoryDoc {
   mtime?: number;
 }
 
-/** Fetch impl that satisfies PouchDB's expected shape. */
-export type PouchFetch = (url: string | URL | Request, opts?: RequestInit) => Promise<Response>;
+/** The local replica's concrete PouchDB type. */
+export type LocalDb = PouchDB.Database<MemoryDoc>;
 
 let localDbInstance: PouchDB.Database<MemoryDoc> | null = null;
 
@@ -58,25 +48,6 @@ export async function getAllLocalDocs(
     if (row.doc) map.set(row.id, row.doc);
   }
   return map;
-}
-
-function remoteUrl(creds: PushCreds): string {
-  return `${creds.serverUrl.replace(/\/+$/, '')}/${creds.dbName}`;
-}
-
-/**
- * Construct a remote PouchDB pointing at the CouchDB database.
- *
- * Note: we intentionally do NOT use PouchDB's `auth: {username, password}`
- * constructor option. In PouchDB 7+ that option only propagates to direct
- * document operations — the live replication `_changes` feed bypasses it
- * and returns 401. Auth must be baked into `fetchImpl` (see
- * `obsidianFetchForPouch` in main.ts), which fires on every request type.
- */
-export function getRemoteDb(creds: PushCreds, fetchImpl: PouchFetch): PouchDB.Database<MemoryDoc> {
-  return new PouchDB<MemoryDoc>(remoteUrl(creds), {
-    fetch: fetchImpl,
-  });
 }
 
 /** Upsert a vault note into the given PouchDB. Returns the new revision. */
@@ -166,98 +137,12 @@ export async function resolveConflictedDoc(
     const doc = await db.get(id, { rev });
     losers.push({ rev, content: doc.content ?? '' });
     // Tolerate a concurrent resolution already having removed this leaf.
-    await db.remove(id, rev).catch((err) => {
+    try {
+      await db.remove(id, rev);
+    } catch (err) {
       const status = (err as { status?: number } | null)?.status;
       if (status !== 404 && status !== 409) throw err;
-    });
+    }
   }
   return { deleted: false, content: winner.content ?? '', losers };
-}
-
-/**
- * Push a vault note to CouchDB via the local PouchDB.
- * 1. Upsert to the local DB.
- * 2. One-shot replicate that single doc to the remote (creates the target DB
- *    on first push thanks to `create_target: true`).
- */
-export async function pushNoteViaPouch(
-  creds: PushCreds,
-  vaultPath: string,
-  content: string,
-  mtime: number,
-  fetchImpl: PouchFetch
-): Promise<{ id: string; rev: string }> {
-  const local = getLocalDb();
-  const remote = getRemoteDb(creds, fetchImpl);
-
-  const result = await upsertNote(local, vaultPath, content, mtime);
-
-  // PouchDB's remote constructor (above) already PUTs the target DB on first
-  // use (skip_setup defaults to false), so we don't need `create_target` here
-  // — which @types/pouchdb-browser 6.x doesn't expose anyway.
-  await PouchDB.replicate(local, remote, {
-    doc_ids: [vaultPath],
-  });
-
-  return result;
-}
-
-export interface ReplicationHandle {
-  cancel(): void;
-}
-
-/** A normalised view of a PouchDB.Replication.SyncResult batch. */
-export interface SyncChange {
-  direction: 'push' | 'pull';
-  docs: MemoryDoc[];
-  docsWritten: number;
-  docsRead: number;
-}
-
-export interface SyncCallbacks {
-  onActive?: () => void;
-  onPaused?: (err?: unknown) => void;
-  onChange?: (info: SyncChange) => void;
-  onError?: (err: unknown) => void;
-}
-
-/**
- * Start continuous **two-way** sync (local <-> remote) with retry.
- *
- * The change callback fires for each batch; `direction: 'pull'` carries docs
- * that just arrived from CouchDB and the caller should apply them to the
- * vault. `direction: 'push'` is informational — those docs were already
- * upserted locally by the vault watcher.
- */
-export function startContinuousSync(
-  creds: PushCreds,
-  fetchImpl: PouchFetch,
-  callbacks?: SyncCallbacks
-): ReplicationHandle {
-  const local = getLocalDb();
-  const remote = getRemoteDb(creds, fetchImpl);
-  const sync = PouchDB.sync(local, remote, {
-    live: true,
-    retry: true,
-  });
-
-  if (callbacks?.onActive) sync.on('active', callbacks.onActive);
-  if (callbacks?.onPaused) sync.on('paused', callbacks.onPaused);
-  if (callbacks?.onError) sync.on('error', callbacks.onError);
-  if (callbacks?.onChange) {
-    sync.on('change', (info) => {
-      callbacks.onChange?.({
-        direction: info.direction,
-        docs: (info.change.docs ?? []) as MemoryDoc[],
-        docsWritten: info.change.docs_written ?? 0,
-        docsRead: info.change.docs_read ?? 0,
-      });
-    });
-  }
-
-  return {
-    cancel: () => {
-      sync.cancel();
-    },
-  };
 }
