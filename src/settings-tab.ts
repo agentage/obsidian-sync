@@ -1,5 +1,6 @@
 import { Notice, PluginSettingTab, Setting, requestUrl, type App, type Plugin } from 'obsidian';
-import { pingServer } from './connection';
+import { isUnconfiguredDefault, pingServer } from './connection';
+import { DEFAULT_SETTINGS } from './settings';
 import type { SyncController } from './sync-controller';
 import type { AuthFlow } from './auth-flow';
 
@@ -111,8 +112,15 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
       .setDesc('Ping the server URL to confirm it is reachable.')
       .addButton((btn) =>
         btn.setButtonText('Test').onClick(async () => {
+          const url = this.core.getSettings().serverUrl;
+          // The default cloud host isn't a CouchDB; guide the user to sign in
+          // rather than pinging it and reporting a meaningless HTTP failure.
+          if (isUnconfiguredDefault(url, DEFAULT_SETTINGS.serverUrl)) {
+            new Notice('Not configured — sign in to start sync');
+            return;
+          }
           btn.setDisabled(true).setButtonText('Testing…');
-          const r = await pingServer(this.core.getSettings().serverUrl, async (u) => {
+          const r = await pingServer(url, async (u) => {
             const res = await requestUrl({ url: u, method: 'GET', throw: false });
             return { status: res.status };
           });
