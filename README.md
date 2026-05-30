@@ -68,11 +68,16 @@ OBSIDIAN_BIN=/path npm run test:e2e   # override binary location
 
 - **Account required:** you need an agentage account to sign in and sync.
 - **Optional payments:** Agentage Memory has a free tier; paid plans are optional. See [agentage.io](https://agentage.io) for current plans.
-- **Network use:** the plugin makes network calls to two hosts —
+- **No calls until you act:** a fresh or signed-out install makes **no network requests at all**. The plugin only contacts the network once you sign in or point it at a sync endpoint with credentials.
+- **Network use:** when active, the plugin makes network calls to two hosts —
   - **`memory.agentage.io`** — account sign-in (OAuth 2.1 / PKCE) and to obtain your sync endpoint and short-lived credentials.
   - **the CouchDB sync host** — `sync.agentage.io` (or the endpoint you configure, e.g. a local CouchDB) to replicate your notes. No other network calls are made.
 - **Privacy policy:** <https://agentage.io/privacy>. **Terms of Service:** <https://agentage.io/terms> (your right to use the plugin is granted under these — see [`LICENSE`](./LICENSE)).
 - **No client-side telemetry.** Your notes are stored in your own per-tenant store (EU-hosted) and mirrored to plain Markdown on your machine.
+
+## Third-party
+
+- **PouchDB** ([Apache-2.0](https://github.com/pouchdb/pouchdb/blob/master/LICENSE)) — bundled to provide the local replica and CouchDB replication.
 
 ## Releasing (maintainers)
 

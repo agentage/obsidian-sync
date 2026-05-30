@@ -29,7 +29,11 @@ export async function applyPulledDoc(
     echo
   );
   for (const loser of losers) {
-    const path = conflictSidecarPath(id, loser.rev);
+    // Same guard as the main write: normalize the sidecar path and refuse any
+    // `..` segment, so a hostile `_id` can't escape the vault via its sidecar
+    // (the main write rejects the doc, but the conflict loop runs regardless).
+    const path = gateway.normalizePath(conflictSidecarPath(id, loser.rev));
+    if (!path || path.split('/').includes('..')) continue;
     if (!gateway.getFile(path)) {
       await gateway.create(path, loser.content);
     }

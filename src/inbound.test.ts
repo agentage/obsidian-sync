@@ -105,6 +105,21 @@ describe('inbound', () => {
       await applyPulledDoc(db, gateway, createEchoSuppress(), 'c.md');
       expect(files.get(sidecar)?.content).toBe('kept');
     });
+
+    it('refuses a conflict sidecar whose id would escape the vault', async () => {
+      // A hostile `_id` with a traversal segment, edited concurrently → a loser.
+      await db.bulkDocs([{ _id: '../escape.md', _rev: '1-aaaa', content: 'A' }], {
+        new_edits: false,
+      });
+      await db.bulkDocs([{ _id: '../escape.md', _rev: '1-bbbb', content: 'B' }], {
+        new_edits: false,
+      });
+      const { gateway, files, ops } = fakeVault();
+      await applyPulledDoc(db, gateway, createEchoSuppress(), '../escape.md');
+      // Neither the main write nor the sidecar escapes — nothing is created.
+      expect([...files.keys()]).toEqual([]);
+      expect(ops.filter((o) => o.startsWith('create:'))).toEqual([]);
+    });
   });
 
   describe('seedLocalReplica', () => {
