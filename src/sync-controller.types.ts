@@ -11,12 +11,19 @@ export interface SyncDeps {
   /** Registers an Obsidian event so the plugin cleans it up on unload. */
   registerEvent: (ref: EventRef) => void;
   statusBar: HTMLElement;
+  /**
+   * Whether the user is signed in. Gates replication so a fresh / signed-out
+   * install makes no unsolicited network calls (Obsidian Developer Policy).
+   */
+  isSignedIn: () => boolean;
 }
 
 /** The controller's public contract — what `main.ts` and the settings tab drive. */
 export interface SyncController {
   start(): Promise<void>;
   stop(): Promise<void>;
+  /** Re-evaluate the replication gate (e.g. after sign-in/out changes it). */
+  refreshReplication(): void;
   pushCurrentNote(): Promise<void>;
   getSettings(): AgentageMemorySettings;
   getBasicCreds(): BasicCreds;

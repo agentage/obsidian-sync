@@ -36,3 +36,25 @@ export async function pingServer(url: string, fetchImpl: FetchLike): Promise<Pin
 export function isUnconfiguredDefault(serverUrl: string, defaultUrl: string): boolean {
   return normalizeServerUrl(serverUrl) === normalizeServerUrl(defaultUrl);
 }
+
+/**
+ * Whether the plugin may open a replication connection. Obsidian's Developer
+ * Policy forbids unsolicited network calls, so a fresh / signed-out install must
+ * stay silent until the user acts. Two conditions must both hold:
+ *  - a **real CouchDB target**: the host is no longer the default API/OAuth host
+ *    (replicating to the default host is meaningless and would just error), and
+ *  - **auth is present**: the user supplied credentials (local-dev / e2e path)
+ *    or is signed in (the bootstrap path, once it sets a real host).
+ * A fresh install (default host) never replicates, even after sign-in — sync
+ * starts only when there is a real host to sync to. Pure: unit-tested without
+ * the Obsidian runtime.
+ */
+export function shouldStartReplication(params: {
+  serverUrl: string;
+  defaultUrl: string;
+  hasCreds: boolean;
+  isSignedIn: boolean;
+}): boolean {
+  const hasRealTarget = !isUnconfiguredDefault(params.serverUrl, params.defaultUrl);
+  return hasRealTarget && (params.hasCreds || params.isSignedIn);
+}

@@ -27,6 +27,7 @@ import { applyPulledDoc, seedLocalReplica } from './inbound';
 import { renderStatus } from './status-bar';
 import { registerVaultWatchers } from './vault-watcher';
 import { pushActiveNote } from './push-note';
+import { shouldStartReplication } from './connection';
 import type { PushCreds } from './replication';
 import type { SyncController, SyncDeps } from './sync-controller.types';
 
@@ -35,7 +36,7 @@ export type { SyncController, SyncDeps } from './sync-controller.types';
 const DEFAULT_DB_NAME = 'agentage-memory';
 
 export function createSyncController(deps: SyncDeps): SyncController {
-  const { app, secrets, load, save, registerEvent, statusBar } = deps;
+  const { app, secrets, load, save, registerEvent, statusBar, isSignedIn } = deps;
   const echo = createEchoSuppress();
   const gateway: VaultGateway = obsidianVaultGateway(app);
 
@@ -93,8 +94,23 @@ export function createSyncController(deps: SyncDeps): SyncController {
     }
   };
 
+  // Developer Policy: no unsolicited network on load. Only replicate once the
+  // user has solicited it — signed in, or pointed the plugin at a real CouchDB
+  // (non-default host) with creds. A fresh / signed-out install stays idle.
+  const shouldReplicate = (): boolean =>
+    shouldStartReplication({
+      serverUrl: settings.serverUrl,
+      defaultUrl: DEFAULT_SETTINGS.serverUrl,
+      hasCreds: Boolean(basicCreds.username && basicCreds.password),
+      isSignedIn: isSignedIn(),
+    });
+
   const restartReplication = (): void => {
     stopReplication();
+    if (!shouldReplicate()) {
+      setStatus('idle', 'Sign in to start sync');
+      return;
+    }
     try {
       replication = startContinuousSync(creds(), fetchImpl(), {
         onActive: () => setStatus('active'),
@@ -174,6 +190,7 @@ export function createSyncController(deps: SyncDeps): SyncController {
   return {
     start,
     stop,
+    refreshReplication: restartReplication,
     pushCurrentNote,
     getSettings: () => settings,
     getBasicCreds: () => basicCreds,
