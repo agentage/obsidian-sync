@@ -24,4 +24,6 @@ export interface SyncController {
   setPassword(value: string): void;
   setServerUrl(value: string): void;
   setDbName(value: string): void;
+  setAuthBase(value: string): void;
+  setAnonKey(value: string): void;
 }

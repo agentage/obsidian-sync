@@ -29,6 +29,7 @@ export default defineConfig({
         'src/status-bar.ts',
         'src/vault-watcher.ts',
         'src/push-note.ts',
+        'src/auth-flow.ts',
         'src/obsidian-fetch.ts',
         'src/obsidian-vault-gateway.ts',
         'src/settings-tab.ts',

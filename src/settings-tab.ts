@@ -1,12 +1,14 @@
 import { Notice, PluginSettingTab, Setting, requestUrl, type App, type Plugin } from 'obsidian';
 import { pingServer } from './connection';
 import type { SyncController } from './sync-controller';
+import type { AuthFlow } from './auth-flow';
 
 export class AgentageMemorySettingTab extends PluginSettingTab {
   constructor(
     app: App,
     plugin: Plugin,
-    private readonly core: SyncController
+    private readonly core: SyncController,
+    private readonly auth: AuthFlow
   ) {
     super(app, plugin);
   }
@@ -14,6 +16,54 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
+
+    this.renderAccount(containerEl);
+    this.renderLocalDev(containerEl);
+  }
+
+  private renderAccount(containerEl: HTMLElement): void {
+    new Setting(containerEl).setName('Account').setHeading();
+
+    new Setting(containerEl)
+      .setName('Agentage Sync')
+      .setDesc(
+        this.auth.isSignedIn()
+          ? 'Connected — this vault syncs to your Agentage Memory.'
+          : 'Start syncing this vault to your Agentage Memory.'
+      )
+      .addButton((btn) => {
+        if (this.auth.isSignedIn()) {
+          btn.setButtonText('Sign out').onClick(() => this.auth.signOut());
+        } else {
+          btn
+            .setButtonText('Start sync')
+            .setCta()
+            .onClick(() => this.auth.startSignIn());
+        }
+      });
+
+    new Setting(containerEl)
+      .setName('Auth endpoint')
+      .setDesc('GoTrue base URL. Leave the default unless told otherwise.')
+      .addText((text) =>
+        text
+          .setPlaceholder('https://dev.agentage.io/auth/v1')
+          .setValue(this.core.getSettings().authBase)
+          .onChange((value) => this.core.setAuthBase(value))
+      );
+
+    new Setting(containerEl)
+      .setName('Auth key')
+      .setDesc('Public Agentage auth key (provided with your account). Required to sign in.')
+      .addText((text) =>
+        text
+          .setValue(this.core.getSettings().anonKey)
+          .onChange((value) => this.core.setAnonKey(value))
+      );
+  }
+
+  private renderLocalDev(containerEl: HTMLElement): void {
+    new Setting(containerEl).setName('Local dev').setHeading();
 
     new Setting(containerEl)
       .setName('Server URL')
