@@ -70,7 +70,7 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
       .setDesc('Your Agentage Memory cloud endpoint. Leave the default unless told otherwise.')
       .addText((text) =>
         text
-          .setPlaceholder('https://mcp.agentage.io')
+          .setPlaceholder('https://memory.agentage.io')
           .setValue(this.core.getSettings().serverUrl)
           .onChange((value) => this.core.setServerUrl(value))
       );
