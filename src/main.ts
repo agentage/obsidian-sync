@@ -12,6 +12,7 @@ const RIBBON_ICON = 'refresh-cw';
 // which owns all state.
 export default class AgentageMemoryPlugin extends Plugin {
   #core?: SyncController;
+  #settingTab?: AgentageMemorySettingTab;
 
   async onload(): Promise<void> {
     const statusBar = this.addStatusBarItem();
@@ -38,6 +39,10 @@ export default class AgentageMemoryPlugin extends Plugin {
       notify: (message) => new Notice(message),
       openExternal: (url) => window.open(url, '_blank'),
       now: () => Date.now(),
+      // Re-render the settings tab the instant sign-in/out completes (the
+      // callback arrives async via the protocol handler), so the button flips
+      // without a reload.
+      onChange: () => this.#settingTab?.display(),
     });
     // GoTrue redirects to obsidian://agentage-memory-cb?code=… after sign-in.
     this.registerObsidianProtocolHandler(CALLBACK_ACTION, (params) => {
@@ -46,9 +51,8 @@ export default class AgentageMemoryPlugin extends Plugin {
 
     this.addRibbonIcon(
       RIBBON_ICON,
-      'Agentage Memory',
-      () =>
-        new Notice('Agentage Memory: edits auto-sync; use the command palette to push manually.')
+      'Agentage Sync',
+      () => new Notice('Agentage Sync: edits auto-sync; use the command palette to push manually.')
     );
     this.addCommand({
       id: 'push-current-note',
@@ -65,7 +69,8 @@ export default class AgentageMemoryPlugin extends Plugin {
       name: 'Sign out of Agentage',
       callback: () => auth.signOut(),
     });
-    this.addSettingTab(new AgentageMemorySettingTab(this.app, this, core, auth));
+    this.#settingTab = new AgentageMemorySettingTab(this.app, this, core, auth);
+    this.addSettingTab(this.#settingTab);
 
     await core.start();
   }

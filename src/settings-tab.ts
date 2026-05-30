@@ -25,21 +25,18 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
     new Setting(containerEl).setName('Account').setHeading();
 
     new Setting(containerEl)
-      .setName('Agentage')
+      .setName('Agentage Sync')
       .setDesc(
         this.auth.isSignedIn()
-          ? 'Signed in. Sync uses your Agentage account.'
-          : 'Sign in with Agentage to sync this vault to your memory.'
+          ? 'Connected — this vault syncs to your Agentage Memory.'
+          : 'Start syncing this vault to your Agentage Memory.'
       )
       .addButton((btn) => {
         if (this.auth.isSignedIn()) {
-          btn.setButtonText('Sign out').onClick(() => {
-            this.auth.signOut();
-            this.display();
-          });
+          btn.setButtonText('Sign out').onClick(() => this.auth.signOut());
         } else {
           btn
-            .setButtonText('Sign in with Agentage')
+            .setButtonText('Start sync')
             .setCta()
             .onClick(() => this.auth.startSignIn());
         }
