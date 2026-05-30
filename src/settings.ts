@@ -3,7 +3,7 @@ export interface AgentageMemorySettings {
   /** CouchDB database name. Configurable so e2e tests and future per-vault
    * setups can target an isolated DB on the same server. */
   dbName: string;
-  /** GoTrue auth base for OAuth sign-in, e.g. https://memory.agentage.io/auth/v1 */
+  /** GoTrue auth base for OAuth sign-in, e.g. https://sync.agentage.io/auth/v1 (same host as the sync store) */
   authBase: string;
   /** Public Supabase anon key for the auth endpoint (public by design). */
   anonKey: string;
@@ -13,9 +13,9 @@ export interface AgentageMemorySettings {
 // `app.secretStorage`, never plaintext `data.json` — see credentials.ts /
 // token-store.ts. `anonKey` is a *public* key, so it stays in settings.
 export const DEFAULT_SETTINGS: AgentageMemorySettings = {
-  serverUrl: 'https://memory.agentage.io',
+  serverUrl: 'https://sync.agentage.io',
   dbName: 'agentage-memory',
-  authBase: 'https://memory.agentage.io/auth/v1',
+  authBase: 'https://sync.agentage.io/auth/v1',
   anonKey: '',
 };
 

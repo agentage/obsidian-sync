@@ -7,15 +7,14 @@ import { readFileSync } from 'node:fs';
 const readme = readFileSync('README.md', 'utf8');
 
 const required = [
-  'memory.agentage.io',
-  'sync.agentage.io',
+  'sync.agentage.io', // the single host the plugin contacts
   'agentage.io/privacy',
   'agentage.io/terms',
   'PouchDB', // third-party attribution (Apache-2.0)
   'No calls until you act', // honest disclosure of the no-network-on-load gate
 ];
-// Hosts the shipped build never contacts must not be advertised: the old wrong
-// host and the internal dev host (scrubbed pre-public) — README⇄build parity.
+// Hosts the shipped build never contacts must not be advertised (README⇄build
+// parity): the old wrong host, the internal dev host (scrubbed pre-public).
 const forbidden = ['mcp.agentage.io', 'dev.agentage.io'];
 
 const missing = required.filter((s) => !readme.includes(s));
@@ -26,4 +25,4 @@ if (missing.length || present.length) {
   if (present.length) console.error(`✖ README contains forbidden string(s): ${present.join(', ')}`);
   process.exit(1);
 }
-console.log('✓ README discloses both hosts + privacy + terms; no forbidden host');
+console.log('✓ README discloses the single sync host + privacy + terms + attribution; no forbidden host');

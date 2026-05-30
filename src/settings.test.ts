@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, normalizeServerUrl } from './settings';
 
 describe('settings', () => {
-  it('defaults to the agentage cloud endpoint', () => {
-    expect(DEFAULT_SETTINGS.serverUrl).toBe('https://memory.agentage.io');
+  it('defaults to the single agentage sync host', () => {
+    expect(DEFAULT_SETTINGS.serverUrl).toBe('https://sync.agentage.io');
+    // Auth shares the same host (single-host model): one host for sign-in + sync.
+    expect(new URL(DEFAULT_SETTINGS.authBase).origin).toBe(DEFAULT_SETTINGS.serverUrl);
   });
 
   describe('normalizeServerUrl', () => {

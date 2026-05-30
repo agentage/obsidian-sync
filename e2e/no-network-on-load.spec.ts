@@ -9,7 +9,7 @@ test.setTimeout(120_000);
 const VAULT = process.env.OBSIDIAN_VAULT ?? '/tmp/obsidian-test-vault';
 const DATA_JSON = join(VAULT, '.obsidian', 'plugins', 'agentage-memory', 'data.json');
 const STATUS_ICON = '.agentage-memory-status-icon';
-const DEFAULT_HOST = 'https://memory.agentage.io';
+const DEFAULT_HOST = 'https://sync.agentage.io';
 const NETWORKED = ['active', 'synced', 'error'];
 
 /**
