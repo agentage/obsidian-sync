@@ -86,7 +86,10 @@ export default class AgentageMemoryPlugin extends Plugin {
     });
     // Now that `auth` exists, point the controller's gate at the real check
     // and wire the bootstrap: trade a valid account token for a per-tenant sync
-    // target. The API origin is the auth host's origin (e.g. memory.agentage.io).
+    // target. Single-host model — the API origin is the SYNC host (serverUrl),
+    // which also fronts /auth and /api/sync (e.g. sync.agentage.io); the plugin
+    // contacts exactly one host. Anchored on serverUrl (not authBase) so the
+    // bootstrap follows wherever sync points.
     isSignedIn = auth.isSignedIn;
     const bootstrapPost: HttpPost = async (url, init) => {
       const res = await requestUrl({
@@ -101,7 +104,7 @@ export default class AgentageMemoryPlugin extends Plugin {
     syncBootstrap = async () => {
       const token = await auth.getValidAccessToken();
       if (!token) return null;
-      const apiBase = new URL(core.getSettings().authBase).origin;
+      const apiBase = new URL(core.getSettings().serverUrl).origin;
       return requestSyncBootstrap(bootstrapPost, apiBase, token, Date.now());
     };
     // GoTrue redirects to obsidian://agentage-memory-cb?code=… after sign-in.

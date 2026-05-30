@@ -5,7 +5,7 @@ import { dismissTrustAndAwaitSync, dumpFailureContext } from './helpers/session'
 
 test.setTimeout(120_000);
 
-const DEFAULT_HOST = 'https://memory.agentage.io';
+const DEFAULT_HOST = 'https://sync.agentage.io';
 
 /** Open the Agentage Memory plugin settings tab via Obsidian's settings API. */
 async function openPluginSettings(page: Page): Promise<void> {

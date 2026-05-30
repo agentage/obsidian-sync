@@ -23,7 +23,7 @@ export interface SyncBootstrap {
   expiresAt: number;
 }
 
-/** The bootstrap endpoint for an API origin (e.g. https://memory.agentage.io). */
+/** The bootstrap endpoint for an API origin (e.g. https://sync.agentage.io). */
 export function bootstrapUrl(apiBase: string): string {
   return `${apiBase.replace(/\/+$/, '')}/api/sync/bootstrap`;
 }
