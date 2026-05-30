@@ -63,6 +63,11 @@ jobs:
         if: always() && steps.install.outcome == 'success'
         run: npm run check:hosts && npm run check:docs
 
+      - name: Bundle has no node builtins (mobile-safe)
+        id: bundle-check
+        if: always() && steps.build.outcome == 'success'
+        run: npm run check:bundle
+
       - name: Install Obsidian + Xvfb + window manager for E2E
         id: e2e-setup
         if: always() && steps.build.outcome == 'success'

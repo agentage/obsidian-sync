@@ -7,30 +7,45 @@ name: Release
 #     tags), and `git push --follow-tags` fires this workflow.
 #  2. repository_dispatch `release-plugin` (fired daily by agentage/e2e on a green
 #     nightly) or a manual workflow_dispatch — auto-bumps the patch version,
-#     commits + tags it back to master, then releases. Skips when there are no
-#     new commits since the last tag, so a green-but-unchanged night is a no-op.
+#     lands the bump via a PR (master's ruleset blocks direct pushes), then tags
+#     + builds + publishes. Skips when there are no new commits since the last tag.
+#
+# RELEASE_PAT (a fine-grained PAT / GitHub App token with contents:write +
+# pull-requests:write) is REQUIRED for the dispatch/manual path: a PR opened with
+# the default GITHUB_TOKEN does NOT trigger pr-validation, so `gh pr checks
+# --watch` would hang forever. See RELEASING.md. The tag-push path falls back to
+# GITHUB_TOKEN cleanly.
 on:
   push:
     tags:
       - '*.*.*'
   workflow_dispatch:
+    inputs:
+      draft:
+        description: 'Create the GitHub Release as a draft (verify assets before publishing — use for the store-submission release).'
+        type: boolean
+        default: false
   repository_dispatch:
     types: [release-plugin]
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   release:
     name: 📦 Build & publish plugin release
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          # PAT so the auto-bump PR triggers pr-validation; falls back to the
+          # default token for the tag-push path (which needs no PR).
+          token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -41,34 +56,78 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Resolve the version to release. A tag push already carries it; a
-      # dispatch/manual run bumps patch (commit + tag back to master) unless
-      # there's nothing new since the last tag.
+      # For a tag push the version is already pinned; for a dispatch/manual run
+      # we compute the next patch (skip when nothing's new since the last tag),
+      # land the bump via a PR — the `master-protection` ruleset blocks direct
+      # pushes — and then tag the merged commit.
       - name: Resolve release version
         id: ver
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
             echo "release=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
           LAST=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           if [ -n "$LAST" ] && [ "$(git rev-list -n1 "$LAST")" = "$(git rev-parse HEAD)" ]; then
             echo "release=false" >> "$GITHUB_OUTPUT"
             echo "No new commits since tag $LAST — skipping release."
             exit 0
           fi
+
+          if [ -z "${{ secrets.RELEASE_PAT }}" ]; then
+            echo "::error::RELEASE_PAT is not set. A PR opened with GITHUB_TOKEN won't trigger pr-validation, so the bump can't be validated/merged. Add the RELEASE_PAT secret (see RELEASING.md)." >&2
+            exit 1
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
           npm version patch --no-git-tag-version >/dev/null
           NEW=$(node -p "require('./package.json').version")
+          BRANCH="chore/release-bump-${GITHUB_RUN_ID}"
+
+          git checkout -b "$BRANCH"
           git add package.json package-lock.json manifest.json versions.json
           git commit -m "chore(release): $NEW"
-          git tag "$NEW"
-          git push origin "HEAD:${GITHUB_REF#refs/heads/}" --follow-tags
+          git push origin "$BRANCH"
+
+          PR_URL=$(gh pr create \
+            --base master --head "$BRANCH" \
+            --title "chore(release): $NEW" \
+            --body "Automated patch bump from a green nightly (agentage/e2e). The Release workflow will merge this PR once pr-validation passes, then tag and publish ${NEW}.")
+          PR=${PR_URL##*/}
+
+          echo "Waiting for pr-validation on PR #$PR…"
+          gh pr checks "$PR" --watch
+
+          echo "Squash-merging PR #$PR"
+          gh pr merge "$PR" --squash --delete-branch
+
+          git fetch origin master
+          git checkout master
+          git reset --hard origin/master
+
+          MERGED=$(node -p "require('./manifest.json').version")
+          if [ "$MERGED" != "$NEW" ]; then
+            echo "::error::Merged master manifest is $MERGED, expected $NEW (concurrent push?)"
+            exit 1
+          fi
+
           echo "tag=$NEW" >> "$GITHUB_OUTPUT"
           echo "release=true" >> "$GITHUB_OUTPUT"
-          echo "Releasing $NEW (was ${LAST:-none})."
+          echo "Bump landed on master as $NEW (was ${LAST:-none})."
+
+      # Tag the merged commit (the push-tag path already carries its tag). Tags
+      # aren't covered by the master ruleset, so this push works with either token.
+      - name: Tag merged commit
+        if: steps.ver.outputs.release == 'true' && github.event_name != 'push'
+        run: |
+          git tag "${{ steps.ver.outputs.tag }}"
+          git push origin "${{ steps.ver.outputs.tag }}"
 
       - name: Verify tag matches manifest version
         if: steps.ver.outputs.release == 'true'
@@ -85,12 +144,17 @@ jobs:
         if: steps.ver.outputs.release == 'true'
         run: npm run build
 
+      - name: Verify bundle has no node builtins (mobile-safe)
+        if: steps.ver.outputs.release == 'true'
+        run: node scripts/check-bundle.mjs
+
       - name: Create GitHub Release
         if: steps.ver.outputs.release == 'true'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: ${{ steps.ver.outputs.tag }}
+          draft: ${{ github.event.inputs.draft == 'true' }}
           prerelease: ${{ contains(steps.ver.outputs.tag, '-') }}
           body: |
             **Agentage Memory ${{ steps.ver.outputs.tag }}** — the shared memory layer for every AI.

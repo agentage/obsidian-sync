@@ -8,8 +8,8 @@ import { defineConfig } from '@playwright/test';
  * binary is in `e2e/helpers/launch.ts`.
  *
  * Run locally:  npm run test:e2e
- * Skip in CI:   E2E is opt-in until we can install Obsidian inside the
- *               GitHub Actions runner (separate PR).
+ * In CI:        runs on every PR — pr-validation.yml installs Obsidian into the
+ *               runner and drives Playwright under xvfb.
  */
 export default defineConfig({
   testDir: './e2e',
