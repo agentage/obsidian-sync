@@ -20,6 +20,10 @@ export default class AgentageMemoryPlugin extends Plugin {
       get: (id) => this.app.secretStorage.getSecret(id),
       set: (id, value) => this.app.secretStorage.setSecret(id, value),
     };
+    // The controller needs `isSignedIn` to gate replication, but `auth` is
+    // created after `core` (it reads `core.getSettings()`). Bridge the cycle
+    // with a thunk that resolves to the real auth check once `auth` exists.
+    let isSignedIn = (): boolean => false;
     const core = createSyncController({
       app: this.app,
       secrets,
@@ -27,6 +31,7 @@ export default class AgentageMemoryPlugin extends Plugin {
       save: (data) => this.saveData(data),
       registerEvent: (ref) => this.registerEvent(ref),
       statusBar,
+      isSignedIn: () => isSignedIn(),
     });
     this.#core = core;
 
@@ -39,11 +44,16 @@ export default class AgentageMemoryPlugin extends Plugin {
       notify: (message) => new Notice(message),
       openExternal: (url) => window.open(url, '_blank'),
       now: () => Date.now(),
-      // Re-render the settings tab the instant sign-in/out completes (the
-      // callback arrives async via the protocol handler), so the button flips
-      // without a reload.
-      onChange: () => this.#settingTab?.display(),
+      // On sign-in/out: re-render the settings tab (the callback arrives async
+      // via the protocol handler, so the button flips without a reload) and
+      // re-evaluate the replication gate now that `isSignedIn` may have changed.
+      onChange: () => {
+        this.#settingTab?.display();
+        core.refreshReplication();
+      },
     });
+    // Now that `auth` exists, point the controller's gate at the real check.
+    isSignedIn = auth.isSignedIn;
     // GoTrue redirects to obsidian://agentage-memory-cb?code=… after sign-in.
     this.registerObsidianProtocolHandler(CALLBACK_ACTION, (params) => {
       void auth.handleCallback(params);

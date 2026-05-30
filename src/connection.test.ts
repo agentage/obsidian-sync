@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isUnconfiguredDefault, pingServer } from './connection';
+import { isUnconfiguredDefault, pingServer, shouldStartReplication } from './connection';
 import { DEFAULT_SETTINGS } from './settings';
 
 describe('pingServer', () => {
@@ -46,5 +46,66 @@ describe('isUnconfiguredDefault', () => {
 
   it('is false for a configured CouchDB host', () => {
     expect(isUnconfiguredDefault('http://localhost:5984', DEFAULT_SETTINGS.serverUrl)).toBe(false);
+  });
+});
+
+describe('shouldStartReplication (no unsolicited network on load)', () => {
+  const def = DEFAULT_SETTINGS.serverUrl;
+  const real = 'http://localhost:5984';
+
+  it('does NOT replicate on a fresh signed-out install (default host, no creds)', () => {
+    expect(
+      shouldStartReplication({
+        serverUrl: def,
+        defaultUrl: def,
+        hasCreds: false,
+        isSignedIn: false,
+      })
+    ).toBe(false);
+  });
+
+  it('does NOT replicate against the default host even when signed in', () => {
+    expect(
+      shouldStartReplication({ serverUrl: def, defaultUrl: def, hasCreds: false, isSignedIn: true })
+    ).toBe(false);
+  });
+
+  it('does NOT replicate against the default host even with stray creds', () => {
+    expect(
+      shouldStartReplication({ serverUrl: def, defaultUrl: def, hasCreds: true, isSignedIn: false })
+    ).toBe(false);
+  });
+
+  it('replicates against a real host with creds (local-dev / e2e path, not signed in)', () => {
+    expect(
+      shouldStartReplication({
+        serverUrl: real,
+        defaultUrl: def,
+        hasCreds: true,
+        isSignedIn: false,
+      })
+    ).toBe(true);
+  });
+
+  it('replicates against a real host when signed in without basic creds (bootstrap path)', () => {
+    expect(
+      shouldStartReplication({
+        serverUrl: real,
+        defaultUrl: def,
+        hasCreds: false,
+        isSignedIn: true,
+      })
+    ).toBe(true);
+  });
+
+  it('does NOT replicate against a real host with neither creds nor sign-in', () => {
+    expect(
+      shouldStartReplication({
+        serverUrl: real,
+        defaultUrl: def,
+        hasCreds: false,
+        isSignedIn: false,
+      })
+    ).toBe(false);
   });
 });
