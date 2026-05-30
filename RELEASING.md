@@ -40,7 +40,7 @@ Three ways in:
 2. At <https://github.com/obsidianmd/obsidian-releases>, add an entry to
    `community-plugins.json`:
    ```json
-   { "id": "agentage-memory", "name": "Agentage Sync", "author": "agentage",
+   { "id": "agentage-memory", "name": "Agentage Memory", "author": "agentage",
      "description": "...", "repo": "agentage/obsidian-memory" }
    ```
 3. Open the PR; pass the automated scan (mirrored locally by `npm run lint` via
