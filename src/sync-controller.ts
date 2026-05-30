@@ -65,10 +65,7 @@ export function createSyncController(deps: SyncDeps): SyncController {
 
   const seedVault = async (): Promise<void> => {
     try {
-      const seeded = await seedLocalReplica(getLocalDb(), gateway);
-      if (seeded) {
-        console.log(`[Agentage Memory] seeded ${seeded} existing note(s) to local replica`);
-      }
+      await seedLocalReplica(getLocalDb(), gateway);
     } catch (err) {
       console.error('[Agentage Memory] seedVault failed:', describeErr(err));
     }
@@ -83,11 +80,6 @@ export function createSyncController(deps: SyncDeps): SyncController {
   };
 
   const onSyncChange = (info: SyncChange): void => {
-    console.log(
-      '[Agentage Memory] sync',
-      info.direction,
-      `read=${info.docsRead} written=${info.docsWritten}`
-    );
     if (info.direction !== 'pull') return;
     for (const doc of info.docs) {
       void applyPulled(doc._id);
@@ -133,7 +125,6 @@ export function createSyncController(deps: SyncDeps): SyncController {
       layoutReady = true;
       void seedVault();
     });
-    console.log('[Agentage Memory] loaded');
   };
 
   const stop = async (): Promise<void> => {
@@ -143,7 +134,6 @@ export function createSyncController(deps: SyncDeps): SyncController {
     } catch (err) {
       console.warn('[Agentage Memory] destroyLocalDb', describeErr(err));
     }
-    console.log('[Agentage Memory] unloaded');
   };
 
   const setUsername = (value: string): void => {
