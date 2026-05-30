@@ -31,6 +31,18 @@ describe('manifest store-compliance', () => {
     expect(description).not.toMatch(/\p{Extended_Pictographic}/u);
   });
 
+  it('description matches validateManifest charset (no parens/colons/etc.)', () => {
+    expect(description).toMatch(/^[A-Za-z0-9\s.,!?'"-]+$/);
+  });
+
+  it('description contains no forbidden words (obsidian/plugin)', () => {
+    expect(description).not.toMatch(/\b(obsidian|plugin)\b/i);
+  });
+
+  it('display name contains no forbidden words (obsidian/plugin)', () => {
+    expect(manifest.name as string).not.toMatch(/\b(obsidian|plugin)\b/i);
+  });
+
   it('id is the canonical plugin id', () => {
     expect(manifest.id).toBe('agentage-memory');
   });

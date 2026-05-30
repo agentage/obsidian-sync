@@ -51,22 +51,23 @@ export default class AgentageMemoryPlugin extends Plugin {
 
     this.addRibbonIcon(
       RIBBON_ICON,
-      'Agentage Sync',
-      () => new Notice('Agentage Sync: edits auto-sync; use the command palette to push manually.')
+      'Agentage Memory',
+      () =>
+        new Notice('Agentage Memory: edits auto-sync; use the command palette to push manually.')
     );
     this.addCommand({
       id: 'push-current-note',
-      name: 'Push current note to Agentage Memory',
+      name: 'Push current note',
       callback: () => core.pushCurrentNote(),
     });
     this.addCommand({
       id: 'sign-in',
-      name: 'Sign in to Agentage',
+      name: 'Sign in',
       callback: () => auth.startSignIn(),
     });
     this.addCommand({
       id: 'sign-out',
-      name: 'Sign out of Agentage',
+      name: 'Sign out',
       callback: () => auth.signOut(),
     });
     this.#settingTab = new AgentageMemorySettingTab(this.app, this, core, auth);

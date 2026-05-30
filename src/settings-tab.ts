@@ -26,7 +26,7 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
     new Setting(containerEl).setName('Account').setHeading();
 
     new Setting(containerEl)
-      .setName('Agentage Sync')
+      .setName('Agentage Memory')
       .setDesc(
         this.auth.isSignedIn()
           ? 'Connected — this vault syncs to your Agentage Memory.'
