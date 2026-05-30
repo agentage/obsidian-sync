@@ -9,7 +9,8 @@ import { DEFAULT_SETTINGS, normalizeServerUrl, type AgentageMemorySettings } fro
 import { destroyLocalDb, getLocalDb } from './pouch';
 import { startContinuousSync, type ReplicationHandle, type SyncChange } from './replication';
 import { obsidianFetchForPouch } from './obsidian-fetch';
-import { basicAuthProvider, type AuthProvider } from './auth';
+import { basicAuthProvider, bearerAuthProvider, type AuthProvider } from './auth';
+import { isBootstrapExpired, type SyncBootstrap } from './bootstrap';
 import {
   DEFAULT_BASIC_CREDS,
   PASSWORD_SECRET,
@@ -36,7 +37,7 @@ export type { SyncController, SyncDeps } from './sync-controller.types';
 const DEFAULT_DB_NAME = 'agentage-memory';
 
 export function createSyncController(deps: SyncDeps): SyncController {
-  const { app, secrets, load, save, registerEvent, statusBar, isSignedIn } = deps;
+  const { app, secrets, load, save, registerEvent, statusBar, isSignedIn, syncBootstrap } = deps;
   const echo = createEchoSuppress();
   const gateway: VaultGateway = obsidianVaultGateway(app);
 
@@ -44,11 +45,21 @@ export function createSyncController(deps: SyncDeps): SyncController {
   let basicCreds: BasicCreds = DEFAULT_BASIC_CREDS;
   let replication: ReplicationHandle | null = null;
   let layoutReady = false;
+  // The signed-in cloud sync target + short-lived bearer from /api/sync/bootstrap.
+  // Null = use the local-dev Basic-creds path (settings.serverUrl + creds).
+  let bootstrap: SyncBootstrap | null = null;
 
   const persist = (): Promise<void> => save(settings);
-  const creds = (): PushCreds => ({ serverUrl: settings.serverUrl, dbName: settings.dbName });
+  // When signed in, replicate against the bootstrapped per-tenant target with a
+  // bearer token; otherwise the configured/local-dev host with Basic creds.
+  const creds = (): PushCreds =>
+    bootstrap
+      ? { serverUrl: bootstrap.syncUrl, dbName: bootstrap.dbName }
+      : { serverUrl: settings.serverUrl, dbName: settings.dbName };
   const authProvider = (): AuthProvider =>
-    basicAuthProvider(basicCreds.username, basicCreds.password);
+    bootstrap
+      ? bearerAuthProvider(() => bootstrap?.token ?? null)
+      : basicAuthProvider(basicCreds.username, basicCreds.password);
   const fetchImpl = (): ReturnType<typeof obsidianFetchForPouch> =>
     obsidianFetchForPouch(authProvider());
   const setStatus = (state: StatusState, detail?: string): void =>
@@ -94,10 +105,11 @@ export function createSyncController(deps: SyncDeps): SyncController {
     }
   };
 
-  // Developer Policy: no unsolicited network on load. Only replicate once the
-  // user has solicited it — signed in, or pointed the plugin at a real CouchDB
+  // Developer Policy: no unsolicited network on load. Replicate once the user
+  // has solicited it — a live cloud bootstrap (signed in), or a real CouchDB
   // (non-default host) with creds. A fresh / signed-out install stays idle.
   const shouldReplicate = (): boolean =>
+    bootstrap !== null ||
     shouldStartReplication({
       serverUrl: settings.serverUrl,
       defaultUrl: DEFAULT_SETTINGS.serverUrl,
@@ -105,12 +117,29 @@ export function createSyncController(deps: SyncDeps): SyncController {
       isSignedIn: isSignedIn(),
     });
 
+  // Fetch (or refresh on expiry) the cloud sync target when signed in. No-op
+  // without a `syncBootstrap` dep (local-dev / e2e) or when signed out.
+  const ensureBootstrap = async (): Promise<void> => {
+    if (!syncBootstrap || !isSignedIn()) {
+      bootstrap = null;
+      return;
+    }
+    if (bootstrap && !isBootstrapExpired(bootstrap, Date.now())) return;
+    try {
+      bootstrap = await syncBootstrap();
+    } catch (err) {
+      console.error('[Agentage Memory] sync bootstrap failed:', describeErr(err));
+      bootstrap = null;
+    }
+  };
+
   const restartReplication = (): void => {
     stopReplication();
     if (!shouldReplicate()) {
       setStatus('idle', 'Sign in to start sync');
       return;
     }
+    const usedBootstrap = bootstrap;
     try {
       replication = startContinuousSync(creds(), fetchImpl(), {
         onActive: () => setStatus('active'),
@@ -122,6 +151,11 @@ export function createSyncController(deps: SyncDeps): SyncController {
         onError: (err) => {
           console.error('[Agentage Memory] replication terminated:', describeErr(err));
           setStatus('error');
+          // A bearer token may have expired mid-stream — re-bootstrap once and
+          // restart. Guarded by the expiry check so persistent errors don't loop.
+          if (usedBootstrap && isBootstrapExpired(usedBootstrap, Date.now())) {
+            void refreshSync();
+          }
         },
       });
     } catch (err) {
@@ -130,13 +164,20 @@ export function createSyncController(deps: SyncDeps): SyncController {
     }
   };
 
+  // Refresh the cloud target (if any) then (re)start replication. This is the
+  // entry point after sign-in/out and on load.
+  const refreshSync = async (): Promise<void> => {
+    await ensureBootstrap();
+    restartReplication();
+  };
+
   const pushCurrentNote = (): Promise<void> => pushActiveNote(app, creds(), fetchImpl());
 
   const start = async (): Promise<void> => {
     await loadSettings();
     setStatus('idle');
     registerVaultWatchers({ app, echo, registerEvent, isLayoutReady: () => layoutReady });
-    restartReplication();
+    await refreshSync();
     app.workspace.onLayoutReady(() => {
       layoutReady = true;
       void seedVault();
@@ -190,7 +231,9 @@ export function createSyncController(deps: SyncDeps): SyncController {
   return {
     start,
     stop,
-    refreshReplication: restartReplication,
+    // Sign-in/out changes the cloud target, so refresh the bootstrap before
+    // restarting (not just restartReplication, which reuses the cached target).
+    refreshReplication: () => void refreshSync(),
     pushCurrentNote,
     getSettings: () => settings,
     getBasicCreds: () => basicCreds,
