@@ -1,5 +1,12 @@
 import { TFile, normalizePath, type App } from 'obsidian';
-import type { VaultGateway } from './apply-doc';
+import type { VaultFile, VaultGateway } from './apply-doc';
+
+/** Narrow an opaque gateway handle to a TFile (it only ever holds one) without
+ * an `as` cast, satisfying the store scan's no-tfile-cast rule. */
+function asTFile(file: VaultFile): TFile {
+  if (file instanceof TFile) return file;
+  throw new Error('[Agentage Memory] expected a vault TFile');
+}
 
 /**
  * Obsidian-backed `VaultGateway`. The single place that touches the live
@@ -17,13 +24,14 @@ export function obsidianVaultGateway(app: App): VaultGateway {
       return file instanceof TFile ? file : null;
     },
     read(file) {
-      return app.vault.read(file as TFile);
+      return app.vault.read(asTFile(file));
     },
     modify(file, content) {
-      return app.vault.modify(file as TFile, content);
+      return app.vault.modify(asTFile(file), content);
     },
     async trash(file) {
-      await app.vault.trash(file as TFile, true);
+      // System trash, not a hard wipe; cast-free narrowing keeps the store scan happy.
+      await app.vault.trash(asTFile(file), true);
     },
     async create(path, content) {
       await app.vault.create(normalizePath(path), content);
