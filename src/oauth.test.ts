@@ -9,7 +9,7 @@ import {
 } from './oauth';
 
 const CFG: OAuthConfig = {
-  authBase: 'https://dev.agentage.io/auth/v1',
+  authBase: 'https://memory.agentage.io/auth/v1',
   anonKey: 'anon-123',
   redirectUri: 'obsidian://agentage-memory-cb',
 };
@@ -38,7 +38,7 @@ describe('oauth', () => {
 
       expect(tokens.accessToken).toBe('at');
       const [url, init] = post.mock.calls[0];
-      expect(url).toBe('https://dev.agentage.io/auth/v1/token?grant_type=pkce');
+      expect(url).toBe('https://memory.agentage.io/auth/v1/token?grant_type=pkce');
       expect(init.headers.apikey).toBe('anon-123');
       expect(JSON.parse(init.body)).toEqual({
         auth_code: 'the-code',
@@ -59,7 +59,7 @@ describe('oauth', () => {
       const post = vi.fn<HttpPost>().mockResolvedValue({ status: 200, json: okBody });
       await refreshTokens(post, CFG, 'old-rt', 0);
       const [url, init] = post.mock.calls[0];
-      expect(url).toBe('https://dev.agentage.io/auth/v1/token?grant_type=refresh_token');
+      expect(url).toBe('https://memory.agentage.io/auth/v1/token?grant_type=refresh_token');
       expect(JSON.parse(init.body)).toEqual({ refresh_token: 'old-rt' });
     });
   });

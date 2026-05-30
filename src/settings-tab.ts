@@ -48,7 +48,7 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
       .setDesc('GoTrue base URL. Leave the default unless told otherwise.')
       .addText((text) =>
         text
-          .setPlaceholder('https://dev.agentage.io/auth/v1')
+          .setPlaceholder('https://memory.agentage.io/auth/v1')
           .setValue(this.core.getSettings().authBase)
           .onChange((value) => this.core.setAuthBase(value))
       );

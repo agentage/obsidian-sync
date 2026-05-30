@@ -4,7 +4,7 @@
  * coverage-excluded and verified by the E2E suite, not unit tests. The local
  * store (testable) lives in `pouch.ts`.
  *
- * Architecture pins (see /home/vreshch/agentage-memory/research/obsidian-plugin/plan.md):
+ * Architecture:
  *   - CORS is bypassed by giving PouchDB a `fetch` impl that wraps Obsidian's
  *     `requestUrl` (no CORS headers required on the CouchDB side at request time).
  */

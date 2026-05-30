@@ -32,13 +32,13 @@ describe('pkce', () => {
     it('builds a GoTrue social PKCE authorize URL', () => {
       const url = new URL(
         buildAuthorizeUrl({
-          authBase: 'https://dev.agentage.io/auth/v1/',
+          authBase: 'https://memory.agentage.io/auth/v1/',
           redirectUri: 'obsidian://agentage-memory-cb',
           provider: 'github',
           codeChallenge: 'CHAL',
         })
       );
-      expect(url.origin + url.pathname).toBe('https://dev.agentage.io/auth/v1/authorize');
+      expect(url.origin + url.pathname).toBe('https://memory.agentage.io/auth/v1/authorize');
       expect(url.searchParams.get('provider')).toBe('github');
       expect(url.searchParams.get('redirect_to')).toBe('obsidian://agentage-memory-cb');
       expect(url.searchParams.get('code_challenge')).toBe('CHAL');

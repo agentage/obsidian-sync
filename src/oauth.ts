@@ -6,7 +6,7 @@
  */
 
 export interface OAuthConfig {
-  /** GoTrue base, e.g. https://dev.agentage.io/auth/v1 */
+  /** GoTrue base, e.g. https://memory.agentage.io/auth/v1 */
   authBase: string;
   /** Public Supabase anon key — sent as the `apikey`/Bearer on auth requests. */
   anonKey: string;

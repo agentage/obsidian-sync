@@ -46,7 +46,7 @@ Layering: **Obsidian-coupled** (`main`, `sync-controller`, `settings-tab`, `vaul
 
 **Auth.** OAuth sign-in (GoTrue, PKCE S256, no DCR): `pkce.ts` (verifier/challenge/authorize-URL — tested), `oauth.ts` (token exchange/refresh over an injected `HttpPost` — tested), `token-store.ts` (access/refresh tokens in `app.secretStorage` — tested), `auth-flow.ts` (Obsidian/Electron glue: `requestUrl`, external browser, `obsidian://agentage-memory-cb` callback). Sign-in establishes the Agentage *identity*; replication still rides the local-dev Basic creds until the backend CouchDB-credential bootstrap lands.
 
-**Dependency injection (factory pattern, no container).** `createSyncController(deps)` takes a single typed `SyncDeps` object — Obsidian capabilities (`app`, `secrets`, `load`/`save`, `registerEvent`, `statusBar`) — and returns a singleton `SyncController` interface. All state lives in closure variables, not instance fields. Obsidian-coupled code stays in `main.ts` / `obsidian-vault-gateway.ts`; `sync-controller.ts` and the rest of `src/` stay dependency-free and unit-testable. Mirrors the house Service-Provider DI pattern in `~/projects/CLAUDE.md` (factory + singleton + deps-as-params).
+**Dependency injection (factory pattern, no container).** `createSyncController(deps)` takes a single typed `SyncDeps` object — Obsidian capabilities (`app`, `secrets`, `load`/`save`, `registerEvent`, `statusBar`) — and returns a singleton `SyncController` interface. All state lives in closure variables, not instance fields. Obsidian-coupled code stays in `main.ts` / `obsidian-vault-gateway.ts`; `sync-controller.ts` and the rest of `src/` stay dependency-free and unit-testable. Mirrors the house Service-Provider DI pattern (factory + singleton + deps-as-params).
 
 ## Plugin-specific conventions (Obsidian platform)
 
@@ -55,8 +55,8 @@ Layering: **Obsidian-coupled** (`main`, `sync-controller`, `settings-tab`, `vaul
 - **`minAppVersion` ≥ 1.11.4** — required for `app.secretStorage` (OAuth tokens go there, never `data.json`, which is plaintext).
 - **`isDesktopOnly: false`** — PouchDB/IndexedDB works on mobile; keep the flag (flipping it later re-triggers store review). Mobile _testing_ is deferred for v1.
 - **Pure logic out of `main.ts`.** Code that imports `obsidian` can't be unit-tested (no runtime in Vitest); keep testable logic in dependency-free modules (e.g. `settings.ts`).
-- **Store compliance:** `normalizePath()` on every vault path; **no client-side telemetry**; README must disclose network hosts + account/payment requirements. See the build plan in `agentage-memory/research/obsidian-plugin/plan.md`.
+- **Store compliance:** `normalizePath()` on every vault path; **no client-side telemetry**; README must disclose network hosts + account/payment requirements.
 
 ## Stack & standards
 
-Node 22+, TypeScript strict (ES2024, ESM source). esbuild bundle, Vitest tests (70% coverage gate), ESLint + Prettier. Named exports, files < 200 lines, conventional commits (`feat:`/`fix:`/`chore:`), branches `feature/*` `bugfix/*` `hotfix/*`. PRs gated by `pr-validation.yml` (type-check + lint + format + test + build). Inherits the global standards in `~/projects/CLAUDE.md`.
+Node 22+, TypeScript strict (ES2024, ESM source). esbuild bundle, Vitest tests (70% coverage gate), ESLint + Prettier. Named exports, files < 200 lines, conventional commits (`feat:`/`fix:`/`chore:`), branches `feature/*` `bugfix/*` `hotfix/*`. PRs gated by `pr-validation.yml` (type-check + lint + format + test + build). Inherits the global Agentage coding standards.
