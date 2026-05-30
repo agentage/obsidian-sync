@@ -16,3 +16,18 @@ export function basicAuthProvider(username: string, password: string): AuthProvi
     authHeader: async () => header,
   };
 }
+
+/**
+ * Provider for an OAuth/CouchDB bearer token. `getToken` is read on every
+ * request so the controller can refresh the short-lived sync token (from
+ * `/api/sync/bootstrap`) without rebuilding the provider; returns `null` (send
+ * unauthenticated) when there's no current token.
+ */
+export function bearerAuthProvider(getToken: () => string | null): AuthProvider {
+  return {
+    authHeader: async () => {
+      const token = getToken();
+      return token ? `Bearer ${token}` : null;
+    },
+  };
+}

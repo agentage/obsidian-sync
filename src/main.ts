@@ -1,8 +1,18 @@
-import { Notice, Plugin } from 'obsidian';
+import { Notice, Plugin, requestUrl } from 'obsidian';
 import { createSyncController, type SyncController } from './sync-controller';
 import { CALLBACK_ACTION, REDIRECT_URI, createAuthFlow } from './auth-flow';
+import { requestSyncBootstrap, type SyncBootstrap } from './bootstrap';
+import type { HttpPost } from './oauth';
 import type { SecretStore } from './credentials';
 import { AgentageMemorySettingTab } from './settings-tab';
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
 
 const RIBBON_ICON = 'refresh-cw';
 
@@ -40,10 +50,11 @@ export default class AgentageMemoryPlugin extends Plugin {
         }
       },
     };
-    // The controller needs `isSignedIn` to gate replication, but `auth` is
-    // created after `core` (it reads `core.getSettings()`). Bridge the cycle
-    // with a thunk that resolves to the real auth check once `auth` exists.
+    // The controller needs `isSignedIn` + `syncBootstrap`, but `auth` is created
+    // after `core` (it reads `core.getSettings()`). Bridge the cycle with thunks
+    // that resolve to the real auth-backed impls once `auth` exists.
     let isSignedIn = (): boolean => false;
+    let syncBootstrap = async (): Promise<SyncBootstrap | null> => null;
     const core = createSyncController({
       app: this.app,
       secrets,
@@ -52,6 +63,7 @@ export default class AgentageMemoryPlugin extends Plugin {
       registerEvent: (ref) => this.registerEvent(ref),
       statusBar,
       isSignedIn: () => isSignedIn(),
+      syncBootstrap: () => syncBootstrap(),
     });
     this.#core = core;
 
@@ -72,8 +84,26 @@ export default class AgentageMemoryPlugin extends Plugin {
         core.refreshReplication();
       },
     });
-    // Now that `auth` exists, point the controller's gate at the real check.
+    // Now that `auth` exists, point the controller's gate at the real check
+    // and wire the bootstrap: trade a valid account token for a per-tenant sync
+    // target. The API origin is the auth host's origin (e.g. memory.agentage.io).
     isSignedIn = auth.isSignedIn;
+    const bootstrapPost: HttpPost = async (url, init) => {
+      const res = await requestUrl({
+        url,
+        method: 'POST',
+        headers: init.headers,
+        body: init.body,
+        throw: false,
+      });
+      return { status: res.status, json: safeJson(res.text) };
+    };
+    syncBootstrap = async () => {
+      const token = await auth.getValidAccessToken();
+      if (!token) return null;
+      const apiBase = new URL(core.getSettings().authBase).origin;
+      return requestSyncBootstrap(bootstrapPost, apiBase, token, Date.now());
+    };
     // GoTrue redirects to obsidian://agentage-memory-cb?code=… after sign-in.
     this.registerObsidianProtocolHandler(CALLBACK_ACTION, (params) => {
       void auth.handleCallback(params);
