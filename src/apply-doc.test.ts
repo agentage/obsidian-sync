@@ -16,6 +16,15 @@ function fakeVault(initial: Record<string, string> = {}) {
   const ops: string[] = [];
 
   const gateway: VaultGateway = {
+    // Minimal stand-in for Obsidian's normalizePath: convert backslashes,
+    // collapse repeated slashes, strip leading/trailing slashes. Like the real
+    // one, it does NOT resolve `..` segments.
+    normalizePath(path) {
+      return path
+        .replace(/\\/g, '/')
+        .replace(/\/+/g, '/')
+        .replace(/^\/+|\/+$/g, '');
+    },
     getFile(path) {
       return files.get(path) ?? null;
     },
@@ -109,5 +118,28 @@ describe('applyDocToVault', () => {
     // The vault event fired by our own write is consumed exactly once.
     expect(echo.consume('a.md')).toBe(true);
     expect(echo.consume('a.md')).toBe(false);
+  });
+
+  it('normalizes a hostile leading-slash _id and marks echo on the clean path', async () => {
+    const echo = createEchoSuppress();
+    const { gateway, files, ops } = fakeVault();
+    await applyDocToVault(gateway, { _id: '/notes//leaked.md', content: 'x' }, echo);
+    // Written at the normalized path, not the raw one.
+    expect(files.get('notes/leaked.md')?.content).toBe('x');
+    expect(files.get('/notes//leaked.md')).toBeUndefined();
+    expect(ops).toEqual(['folder:notes', 'create:notes/leaked.md']);
+    // Echo is marked on the normalized path so the resulting vault event matches.
+    expect(echo.consume('notes/leaked.md')).toBe(true);
+  });
+
+  it('refuses a _id that escapes the vault with `..`', async () => {
+    const { gateway, files, ops } = fakeVault();
+    await applyDocToVault(
+      gateway,
+      { _id: 'notes/../../escape.md', content: 'x' },
+      createEchoSuppress()
+    );
+    expect(ops).toEqual([]);
+    expect(files.size).toBe(0);
   });
 });

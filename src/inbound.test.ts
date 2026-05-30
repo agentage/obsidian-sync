@@ -24,6 +24,12 @@ function fakeVault(initial: Record<string, string> = {}) {
   );
   const ops: string[] = [];
   const gateway: VaultGateway = {
+    normalizePath(path) {
+      return path
+        .replace(/\\/g, '/')
+        .replace(/\/+/g, '/')
+        .replace(/^\/+|\/+$/g, '');
+    },
     getFile(path) {
       return files.get(path) ?? null;
     },
