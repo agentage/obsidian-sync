@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { pingServer } from './connection';
+import { isUnconfiguredDefault, pingServer } from './connection';
+import { DEFAULT_SETTINGS } from './settings';
 
 describe('pingServer', () => {
   it('returns ok when the server responds 2xx', async () => {
@@ -27,5 +28,23 @@ describe('pingServer', () => {
     });
     expect(r.ok).toBe(false);
     expect(r.error).toContain('ECONNREFUSED');
+  });
+});
+
+describe('isUnconfiguredDefault', () => {
+  it('is true when the server URL is still the default cloud host', () => {
+    expect(isUnconfiguredDefault(DEFAULT_SETTINGS.serverUrl, DEFAULT_SETTINGS.serverUrl)).toBe(
+      true
+    );
+  });
+
+  it('ignores trailing-slash / whitespace differences', () => {
+    expect(
+      isUnconfiguredDefault(`  ${DEFAULT_SETTINGS.serverUrl}/  `, DEFAULT_SETTINGS.serverUrl)
+    ).toBe(true);
+  });
+
+  it('is false for a configured CouchDB host', () => {
+    expect(isUnconfiguredDefault('http://localhost:5984', DEFAULT_SETTINGS.serverUrl)).toBe(false);
   });
 });
