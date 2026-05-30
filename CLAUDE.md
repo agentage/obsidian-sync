@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Agentage Memory — Obsidian plugin.** Syncs an Obsidian vault to the user's private Agentage Memory so every AI client (Claude, ChatGPT, Cursor, …) reads and writes the same notes. The plugin is a **CouchDB replication client** (PouchDB local replica ↔ per-tenant CouchDB); AI clients reach the same memory via the cloud MCP at `mcp.agentage.io`.
+**Agentage Memory — Obsidian plugin.** Syncs an Obsidian vault to the user's private Agentage Memory so every AI client (Claude, ChatGPT, Cursor, …) reads and writes the same notes. The plugin is a **CouchDB replication client** (PouchDB local replica ↔ per-tenant CouchDB); AI clients reach the same memory via the cloud MCP at `memory.agentage.io`.
 
 **Repository:** `agentage/obsidian-memory`
 **Default Branch:** `master`

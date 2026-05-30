@@ -13,7 +13,7 @@ export interface AgentageMemorySettings {
 // `app.secretStorage`, never plaintext `data.json` — see credentials.ts /
 // token-store.ts. `anonKey` is a *public* key, so it stays in settings.
 export const DEFAULT_SETTINGS: AgentageMemorySettings = {
-  serverUrl: 'https://mcp.agentage.io',
+  serverUrl: 'https://memory.agentage.io',
   dbName: 'agentage-memory',
   authBase: 'https://dev.agentage.io/auth/v1',
   anonKey: '',

@@ -58,6 +58,11 @@ jobs:
         if: always() && steps.install.outcome == 'success'
         run: npm run build
 
+      - name: Store-compliance checks (hosts + docs)
+        id: store-checks
+        if: always() && steps.install.outcome == 'success'
+        run: npm run check:hosts && npm run check:docs
+
       - name: Install Obsidian + Xvfb + window manager for E2E
         id: e2e-setup
         if: always() && steps.build.outcome == 'success'

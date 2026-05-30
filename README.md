@@ -4,7 +4,7 @@
 
 Sync your Obsidian notes to your private [Agentage Memory](https://agentage.io) — the shared memory layer for every AI — so Claude, ChatGPT, Cursor, and any MCP client read and write the *same* memory. Your notes stay as plain Markdown files you own and can export anytime.
 
-> **Status:** early access (v0.1.0). Two-way sync, initial vault seeding, and concurrent-edit conflict handling work today; account login (OAuth) is landing next. See [agentage.io](https://agentage.io).
+> **Status:** early access (v0.1.0). Account sign-in (OAuth) and two-way replication against a CouchDB endpoint — initial vault seeding and concurrent-edit conflict handling — work today. Turnkey sync to the hosted Agentage Memory cloud (automatic endpoint + per-tenant credentials) is in progress; until it lands you point the plugin at your own CouchDB. See [agentage.io](https://agentage.io).
 
 ## How it works
 
@@ -66,9 +66,12 @@ OBSIDIAN_BIN=/path npm run test:e2e   # override binary location
 
 ## Privacy & network use
 
-- **Account required:** you need an agentage account to sync.
-- **Paid service:** Agentage Memory is a subscription product (with a free tier). See [agentage.io](https://agentage.io) for current plans.
-- **Network use:** the plugin connects to your Agentage Memory cloud at `mcp.agentage.io` to sync your notes. It makes no other network calls.
+- **Account required:** you need an agentage account to sign in and sync.
+- **Optional payments:** Agentage Memory has a free tier; paid plans are optional. See [agentage.io](https://agentage.io) for current plans.
+- **Network use:** the plugin makes network calls to two hosts —
+  - **`memory.agentage.io`** — account sign-in (OAuth 2.1 / PKCE) and to obtain your sync endpoint and short-lived credentials.
+  - **the CouchDB sync host** — `sync.agentage.io` (or the endpoint you configure, e.g. a local CouchDB) to replicate your notes. No other network calls are made.
+- **Privacy policy:** <https://agentage.io/privacy>. **Terms of Service:** <https://agentage.io/terms> (your right to use the plugin is granted under these — see [`LICENSE`](./LICENSE)).
 - **No client-side telemetry.** Your notes are stored in your own per-tenant store (EU-hosted) and mirrored to plain Markdown on your machine.
 
 ## Releasing (maintainers)
