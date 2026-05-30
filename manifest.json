@@ -1,0 +1,10 @@
+{
+	"id": "agentage-memory",
+	"name": "Agentage Sync",
+	"version": "0.1.0",
+	"minAppVersion": "1.11.4",
+	"description": "Sync your Obsidian vault to your private Agentage Memory (per-tenant, EU-hosted) so Claude, ChatGPT, Cursor and any MCP client read and write the same notes. Plain Markdown you own. Requires an agentage account.",
+	"author": "agentage",
+	"authorUrl": "https://agentage.io",
+	"isDesktopOnly": false
+}

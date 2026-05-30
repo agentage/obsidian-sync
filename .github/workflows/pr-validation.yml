@@ -1,0 +1,185 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  validate:
+    name: 🔍 Validate Pull Request
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        id: install
+        run: npm ci
+
+      - name: Type check
+        id: type-check
+        if: always() && steps.install.outcome == 'success'
+        run: npm run type-check
+
+      - name: Lint
+        id: lint
+        if: always() && steps.install.outcome == 'success'
+        run: npm run lint
+
+      - name: Format check
+        id: format
+        if: always() && steps.install.outcome == 'success'
+        run: npm run format:check
+
+      - name: Test with coverage
+        id: test
+        if: always() && steps.install.outcome == 'success'
+        run: npm run test:coverage
+
+      - name: Build
+        id: build
+        if: always() && steps.install.outcome == 'success'
+        run: npm run build
+
+      - name: Store-compliance checks (hosts + docs)
+        id: store-checks
+        if: always() && steps.install.outcome == 'success'
+        run: npm run check:hosts && npm run check:docs
+
+      - name: Bundle has no node builtins (mobile-safe)
+        id: bundle-check
+        if: always() && steps.build.outcome == 'success'
+        run: npm run check:bundle
+
+      - name: Install Obsidian + Xvfb + window manager for E2E
+        id: e2e-setup
+        if: always() && steps.build.outcome == 'success'
+        run: ./scripts/e2e/install-obsidian.sh
+
+      - name: Start Xvfb + window manager
+        id: display
+        if: always() && steps.e2e-setup.outcome == 'success'
+        run: ./scripts/e2e/start-display.sh
+
+      - name: Pre-configure Obsidian (test vault, plugin symlink, vault registry)
+        id: e2e-vault
+        if: always() && steps.e2e-setup.outcome == 'success'
+        run: ./scripts/e2e/setup-vault.sh
+
+      - name: Start CouchDB for sync E2E
+        id: e2e-couchdb
+        if: always() && steps.e2e-vault.outcome == 'success'
+        run: |
+          docker compose up -d
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:5984/_up >/dev/null 2>&1; then
+              echo "CouchDB ready at t=${i}s"; break
+            fi
+            sleep 1
+          done
+          curl -sS -u admin:agentage http://localhost:5984/_up
+
+      - name: E2E smoke tests
+        id: e2e
+        if: always() && steps.e2e-couchdb.outcome == 'success'
+        env:
+          OBSIDIAN_BIN: /opt/Obsidian/obsidian
+          OBSIDIAN_VAULT: /tmp/obsidian-test-vault
+          COUCHDB_URL: http://localhost:5984
+          COUCHDB_USER: admin
+          COUCHDB_PASSWORD: agentage
+          COUCHDB_DB: agentage-memory-e2e
+        run: npm run test:e2e
+
+      - name: Upload E2E artifacts
+        if: always() && steps.e2e.outcome != 'skipped'
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-results-${{ github.run_id }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Comment on PR
+        if: always()
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const marker = '<!-- pr-validation-bot -->';
+            const checks = [
+              { name: 'Dependencies installed', outcome: '${{ steps.install.outcome }}' },
+              { name: 'Type check passed', outcome: '${{ steps.type-check.outcome }}' },
+              { name: 'Linting passed', outcome: '${{ steps.lint.outcome }}' },
+              { name: 'Format check passed', outcome: '${{ steps.format.outcome }}' },
+              { name: 'Tests + coverage passed', outcome: '${{ steps.test.outcome }}' },
+              { name: 'Build successful', outcome: '${{ steps.build.outcome }}' },
+              { name: 'Obsidian installed for E2E', outcome: '${{ steps.e2e-setup.outcome }}' },
+              { name: 'Xvfb + window manager started', outcome: '${{ steps.display.outcome }}' },
+              { name: 'Test vault + plugin symlink ready', outcome: '${{ steps.e2e-vault.outcome }}' },
+              { name: 'CouchDB up for sync E2E', outcome: '${{ steps.e2e-couchdb.outcome }}' },
+              { name: 'E2E smoke tests passed', outcome: '${{ steps.e2e.outcome }}' },
+            ];
+            const allPassed = checks.every((c) => c.outcome === 'success');
+            const status = allPassed ? '✅ PASSED' : '❌ FAILED';
+            const emoji = allPassed ? '🎉' : '💥';
+            const checkLines = checks
+              .map((c) => `- ${c.outcome === 'success' ? '✅' : c.outcome === 'skipped' ? '⏭️' : '❌'} ${c.name}`)
+              .join('\n');
+            const body = [
+              marker,
+              `${emoji} **PR Validation ${status}**`,
+              '',
+              `**Commit:** \`${{ github.event.pull_request.head.sha }}\``,
+              `**Branch:** \`${{ github.head_ref }}\``,
+              '',
+              '**Checks:**',
+              checkLines,
+              '',
+              allPassed ? '**Ready to merge!** ✨' : '**Please fix the failing checks.**',
+              '',
+              '---',
+              `🔗 [View workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(
+              (c) => c.user.login === 'github-actions[bot]' && c.body.startsWith(marker)
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
