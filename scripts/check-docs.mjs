@@ -11,8 +11,12 @@ const required = [
   'sync.agentage.io',
   'agentage.io/privacy',
   'agentage.io/terms',
+  'PouchDB', // third-party attribution (Apache-2.0)
+  'No calls until you act', // honest disclosure of the no-network-on-load gate
 ];
-const forbidden = ['mcp.agentage.io'];
+// Hosts the shipped build never contacts must not be advertised: the old wrong
+// host and the internal dev host (scrubbed pre-public) — README⇄build parity.
+const forbidden = ['mcp.agentage.io', 'dev.agentage.io'];
 
 const missing = required.filter((s) => !readme.includes(s));
 const present = forbidden.filter((s) => readme.includes(s));
