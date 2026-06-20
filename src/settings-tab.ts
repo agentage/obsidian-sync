@@ -62,53 +62,51 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
       text: 'One memory for all your AI — backed up, in sync, and readable by Claude, ChatGPT, Cursor, and more.',
     });
 
-    // ---- The three simple controls ----
-    const setup = new Setting(containerEl)
+    // ---- Connect (top, primary) ----
+    const connected = s.origin.remote.trim() === AGENTAGE_REMOTE;
+    const connect = new Setting(containerEl);
+    if (connected) {
+      connect
+        .setName('Connected to Agentage')
+        .setDesc('Your account is linked. The sign-in token is stored privately on this device.')
+        .addButton((b) => b.setWarning().setButtonText('Disconnect').onClick(() => { s.origin.remote = ''; s.syncEnabled = false; this.touch(); this.display(); }));
+    } else {
+      connect
+        .setName('Connect')
+        .setDesc('Link your Agentage account to back up and share this memory.')
+        .addButton((b) => b.setCta().setButtonText('Connect to agentage').onClick(() => { s.origin.remote = AGENTAGE_REMOTE; s.syncEnabled = true; this.host.openSignIn(); this.touch(); this.display(); }));
+    }
+    connect.nameEl.addClass('ams-big');
+
+    // ---- The simple controls ----
+    new Setting(containerEl)
       .setName('Setup sync')
-      .setDesc(
-        s.syncEnabled
-          ? s.origin.remote.trim() === AGENTAGE_REMOTE
-            ? 'On — backed up to your Agentage account and synced across your devices.'
-            : 'On — syncing with a custom remote (see Advanced).'
-          : 'Back up this vault and keep all your devices in sync.'
-      )
+      .setDesc(s.syncEnabled ? 'On — your notes are backed up and synced across your devices.' : 'Back up this vault and keep all your devices in sync.')
       .addToggle((t) =>
         t.setValue(s.syncEnabled).onChange((v) => {
           s.syncEnabled = v;
-          if (v && !s.origin.remote.trim()) {
-            s.origin.remote = AGENTAGE_REMOTE;
-            this.host.openSignIn();
-          }
+          if (v && !s.origin.remote.trim()) { s.origin.remote = AGENTAGE_REMOTE; this.host.openSignIn(); }
           this.touch();
           this.display();
         })
       );
-    setup.nameEl.addClass('ams-big');
 
     new Setting(containerEl)
       .setName('Expose local MCP')
       .setDesc('Let AI apps on this computer read and write your notes.')
-      .addToggle((t) => t.setValue(s.mcp.includes('local')).onChange((v) => { this.setScope('local', v); this.display(); }));
+      .addToggle((t) => t.setValue(s.mcp.includes('local')).onChange((v) => this.setScope('local', v)));
 
     new Setting(containerEl)
       .setName('Expose remote MCP')
       .setDesc('Let AI apps anywhere — Claude, ChatGPT, Cursor — read and write your notes.')
-      .addToggle((t) => t.setValue(s.mcp.includes('remote')).onChange((v) => { this.setScope('remote', v); this.display(); }));
-
-    if (s.mcp.length > 0) {
-      new Setting(containerEl)
-        .setName('Your AI connection')
-        .setDesc('Paste this address into Claude, ChatGPT, or Cursor to connect them to your memory.')
-        .addText((t) => { t.setValue(MCP_ENDPOINT).setDisabled(true); t.inputEl.addClass('ams-mono'); return t; })
-        .addButton((b) => b.setCta().setButtonText('Copy').onClick(async () => { await navigator.clipboard.writeText(MCP_ENDPOINT); new Notice('Copied — paste it into your AI app'); }));
-    }
+      .addToggle((t) => t.setValue(s.mcp.includes('remote')).onChange((v) => this.setScope('remote', v)));
 
     this.status = containerEl.createDiv({ cls: 'ams-status' });
 
     // ---- Advanced (hidden complexity) ----
     new Setting(containerEl)
       .setName('Advanced settings')
-      .setDesc('For power users: account, custom remote, paths, MCP details.')
+      .setDesc('For power users: custom remote, paths, MCP address, raw config.')
       .addToggle((t) => t.setValue(s.showAdvanced).onChange((v) => { s.showAdvanced = v; void this.host.saveSettings(); this.display(); }));
 
     if (s.showAdvanced) this.renderAdvanced(containerEl, s);
@@ -124,19 +122,6 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
   }
 
   private renderAdvanced(c: HTMLElement, s: AgentageMemorySettings): void {
-    c.createEl('h3', { text: 'Account' });
-    const remote = s.origin.remote.trim();
-    const acct = new Setting(c).setName('agentage account');
-    if (remote === AGENTAGE_REMOTE) {
-      acct
-        .setDesc('Connected. Your token is stored in ~/.agentage/auth.json (never in vaults.json).')
-        .addButton((b) => b.setWarning().setButtonText('Disconnect').onClick(() => { s.origin.remote = ''; s.syncEnabled = false; this.touch(); this.display(); }));
-    } else {
-      acct
-        .setDesc(remote ? 'Using a custom git remote (below).' : 'Not connected.')
-        .addButton((b) => b.setCta().setButtonText(remote ? 'Use agentage' : 'Connect to agentage').onClick(() => { s.origin.remote = AGENTAGE_REMOTE; s.syncEnabled = true; this.host.openSignIn(); this.touch(); this.display(); }));
-    }
-
     c.createEl('h3', { text: 'Vault' });
     new Setting(c).setName('Vault name').setDesc('Key in vaults.json (a-z 0-9 - _).')
       .addText((t) => t.setPlaceholder('personal').setValue(s.vaultName).onChange((v) => { s.vaultName = v; this.touch(); }));
@@ -155,6 +140,13 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
         .addText((t) => t.setValue(String(s.origin.interval)).onChange((v) => { const n = Number.parseInt(v, 10); s.origin.interval = Number.isFinite(n) && n >= 0 ? n : 0; this.touch(); }));
       new Setting(c).setName('Ignore').setDesc('Comma/newline globs kept out of the repo.')
         .addTextArea((t) => t.setPlaceholder('.obsidian, .trash').setValue(s.origin.ignore.join(', ')).onChange((v) => { s.origin.ignore = parseIgnore(v); this.touch(); }));
+    }
+
+    if (s.mcp.length > 0) {
+      c.createEl('h3', { text: 'MCP' });
+      new Setting(c).setName('MCP address').setDesc('Endpoint AI clients connect to.')
+        .addText((t) => { t.setValue(MCP_ENDPOINT).setDisabled(true); t.inputEl.addClass('ams-mono'); return t; })
+        .addButton((b) => b.setButtonText('Copy').onClick(async () => { await navigator.clipboard.writeText(MCP_ENDPOINT); new Notice('Copied'); }));
     }
 
     c.createEl('h3', { text: 'Saved configuration' });
