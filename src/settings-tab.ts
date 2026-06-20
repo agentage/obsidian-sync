@@ -30,7 +30,7 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
   }
 
   private async write(): Promise<void> {
-    if (validateSettings(this.host.settings).length) return this.setStatus('Not saved yet — check Advanced settings.', 'err');
+    if (validateSettings(this.host.settings).length) return this.setStatus('Not saved yet.', 'err');
     if (!this.host.isDesktop) return this.setStatus('Saved in the app.', 'muted');
     this.setStatus('Saving…', 'muted');
     const res = await this.host.applyConfig();
@@ -91,13 +91,17 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
 
     this.status = containerEl.createDiv({ cls: 'ams-status' });
 
-    // ---- Advanced (just the essentials; everything else lives in the config file) ----
+    // ---- Always available: the address to share + the config file ----
     new Setting(containerEl)
-      .setName('Advanced settings')
-      .setDesc('Default vault, MCP address, and where the config lives.')
-      .addToggle((t) => t.setValue(s.showAdvanced).onChange((v) => { s.showAdvanced = v; void this.host.saveSettings(); this.display(); }));
+      .setName('MCP address')
+      .setDesc('Share this with your AI apps. They can read and write once you turn on Expose MCP above.')
+      .addText((t) => { t.setValue(MCP_ENDPOINT).setDisabled(true); t.inputEl.addClass('ams-mono'); return t; })
+      .addButton((b) => b.setButtonText('Copy').onClick(async () => { await navigator.clipboard.writeText(MCP_ENDPOINT); new Notice('MCP address copied'); }));
 
-    if (s.showAdvanced) this.renderAdvanced(containerEl, s);
+    new Setting(containerEl)
+      .setName('Configuration file')
+      .setDesc(`${s.configDir}/vaults.json — edit it directly to fine-tune sync (interval, ignored files, a custom git remote). Your edits are kept.`)
+      .addButton((b) => b.setButtonText('Copy path').onClick(async () => { await navigator.clipboard.writeText(`${s.configDir}/vaults.json`); new Notice('Path copied'); }));
   }
 
   /** Add/remove an MCP scope, then persist. */
@@ -105,26 +109,6 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
     const s = this.host.settings;
     s.mcp = on ? Array.from(new Set([...s.mcp, scope])) : s.mcp.filter((x) => x !== scope);
     this.touch();
-  }
-
-  private renderAdvanced(c: HTMLElement, s: AgentageMemorySettings): void {
-    new Setting(c)
-      .setName('Set as default vault')
-      .setDesc('The vault every AI sees first.')
-      .addToggle((t) => t.setValue(s.makeDefault).onChange((v) => { s.makeDefault = v; this.touch(); }));
-
-    if (s.mcp.length > 0) {
-      new Setting(c)
-        .setName('MCP address')
-        .setDesc('The endpoint AI clients connect to.')
-        .addText((t) => { t.setValue(MCP_ENDPOINT).setDisabled(true); t.inputEl.addClass('ams-mono'); return t; })
-        .addButton((b) => b.setButtonText('Copy').onClick(async () => { await navigator.clipboard.writeText(MCP_ENDPOINT); new Notice('Copied'); }));
-    }
-
-    new Setting(c)
-      .setName('Configuration file')
-      .setDesc(`${s.configDir}/vaults.json — edit it directly to fine-tune sync (interval, ignored files, a custom git remote). Your edits are kept.`)
-      .addButton((b) => b.setButtonText('Copy path').onClick(async () => { await navigator.clipboard.writeText(`${s.configDir}/vaults.json`); new Notice('Path copied'); }));
   }
 
   private setStatus(text: string, kind: 'ok' | 'err' | 'muted'): void {

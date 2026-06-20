@@ -1,4 +1,4 @@
-import { FileSystemAdapter, Notice, Platform, Plugin } from 'obsidian';
+import { FileSystemAdapter, Notice, Platform, Plugin, setIcon } from 'obsidian';
 import { AgentageMemorySettings, DEFAULT_SETTINGS, normalizeVaultName } from './settings';
 import { AgentageMemorySettingTab, SettingsHost } from './settings-tab';
 import { applyVaultsConfig, type ApplyResult } from './vaults-config';
@@ -14,7 +14,21 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   async onload(): Promise<void> {
     await this.loadSettings();
     this.addSettingTab(new AgentageMemorySettingTab(this.app, this));
-    this.addStatusBarItem().setText('Agentage Sync');
+
+    // Left toolbar (ribbon) icon -> opens the settings page.
+    this.addRibbonIcon('refresh-cw', 'Agentage Sync', () => this.openSettings());
+
+    // Status bar with a leading icon.
+    const sb = this.addStatusBarItem();
+    sb.addClass('ams-statusbar');
+    setIcon(sb.createSpan({ cls: 'ams-sb-icon' }), 'refresh-cw');
+    sb.createSpan({ text: 'Agentage Sync' });
+  }
+
+  private openSettings(): void {
+    const app = this.app as unknown as { setting?: { open?: () => void; openTabById?: (id: string) => void } };
+    app.setting?.open?.();
+    app.setting?.openTabById?.(this.manifest.id);
   }
 
   /** Absolute path of this vault's folder (desktop); falls back to the vault name. */

@@ -88,3 +88,19 @@
 .ams-muted {
   color: var(--text-muted);
 }
+
+.ams-statusbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ams-sb-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ams-sb-icon svg {
+  width: 14px;
+  height: 14px;
+}
