@@ -305,12 +305,10 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     if (!token) return { ok: false, error: 'Sign in to Agentage first.' };
     const vault = normalizeVaultName(name);
     if (!vault) return { ok: false, error: 'Enter a valid name (a-z, 0-9, -, _).' };
-    const res = await this.resolver.resolve(token).catch(() => null);
-    if (!res) return { ok: false, error: "Couldn't reach the agentage sync host." };
-    if (res.vaults.includes(vault)) return { ok: true, vault }; // idempotent: already exists
     try {
+      // Account comes from the token; the create API is at the apex (no sub in the URL).
       const r = await requestUrl({
-        url: `${res.gitEndpoint.replace(/\/+$/, '')}/vaults`,
+        url: `${SYNC_ORIGIN}/vaults`,
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: vault }),
