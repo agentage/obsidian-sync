@@ -99,7 +99,8 @@ export function createGitClient({ fs, http }: GitClientDeps, mergeDriver: MergeD
         return { conflicted: [] };
       } catch (e) {
         if (e instanceof Errors.MergeConflictError) {
-          await wrapFS(git.checkout({ ...base(c), ref })).catch(() => undefined);
+          // iso-git already wrote the conflicted files WITH markers to the worktree
+          // (abortOnConflict:false) — do NOT checkout, that would discard them.
           return { conflicted: e.data.filepaths };
         }
         throw e; // MergeNotSupportedError (criss-cross) handled by the caller (backup + LWW)
@@ -130,6 +131,23 @@ export function createGitClient({ fs, http }: GitClientDeps, mergeDriver: MergeD
     remove: (c: RepoCtx, filepath: string) => wrapFS(git.remove({ ...base(c), filepath })),
     statusMatrix: (c: RepoCtx) => wrapFS(git.statusMatrix({ ...base(c) })),
     resolveRef: (c: RepoCtx, ref: string) => git.resolveRef({ ...base(c), ref }),
+
+    init: (c: RepoCtx) => wrapFS(git.init({ ...base(c), defaultBranch: c.ref ?? 'main' })),
+    addRemote: (c: RepoCtx, remote = 'origin') =>
+      wrapFS(git.addRemote({ ...base(c), remote, url: c.url, force: true })),
+
+    // Fetch + resolve origin/<ref>; null if the remote has no such ref (empty remote).
+    async remoteOid(c: RepoCtx): Promise<string | null> {
+      const ref = c.ref ?? 'main';
+      await wrapFS(
+        git.fetch({ ...base(c), ...auth(c), http, url: c.url, ref, singleBranch: true })
+      ).catch(() => undefined);
+      try {
+        return await git.resolveRef({ ...base(c), ref: `origin/${ref}` });
+      } catch {
+        return null;
+      }
+    },
   };
   return client;
 }

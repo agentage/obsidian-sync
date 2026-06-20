@@ -15,6 +15,9 @@ export interface SettingsHost {
   isDesktop: boolean;
   openSignIn(): void;
   applyConfig(): Promise<ApplyResult>;
+  setToken(token: string): Promise<void>;
+  tokenSet(): boolean;
+  syncNow(): Promise<{ ok: boolean; message: string }>;
 }
 
 export class AgentageMemorySettingTab extends PluginSettingTab {
@@ -155,6 +158,68 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
           await navigator.clipboard.writeText(`${s.configDir}/vaults.json`);
           new Notice('Path copied');
         })
+      );
+
+    this.renderTesting(containerEl, s);
+  }
+
+  // Temporary affordance to try sync against any git remote with a token, before the
+  // agentage remote resolver + OAuth sign-in land. Desktop only.
+  private renderTesting(c: HTMLElement, s: AgentageMemorySettings): void {
+    new Setting(c).setName('Sync (testing)').setHeading();
+    c.createEl('p', {
+      cls: 'ams-sub',
+      text: 'Temporary: point at any git remote you can push to (e.g. a GitHub repo) with a token, then Sync now. The agentage remote + sign-in land next. Desktop only.',
+    });
+
+    new Setting(c)
+      .setName('Git remote (testing)')
+      .setDesc('A git URL you can push to, e.g. https://github.com/you/repo.git')
+      .addText((t) =>
+        t
+          .setPlaceholder('https://…/repo.git')
+          .setValue(s.origin.remote === 'agentage' ? '' : s.origin.remote)
+          .onChange((v) => {
+            s.origin.remote = v.trim();
+            s.syncEnabled = !!v.trim();
+            this.touch();
+          })
+      );
+
+    new Setting(c)
+      .setName('Access token (testing)')
+      .setDesc(
+        this.host.tokenSet()
+          ? 'A token is saved on this device.'
+          : 'Paste a token/PAT (stored on this device, never in vaults.json).'
+      )
+      .addText((t) => {
+        t.inputEl.type = 'password';
+        t.setPlaceholder('paste token').onChange((v) => void this.host.setToken(v.trim()));
+        return t;
+      });
+
+    const result = c.createDiv({ cls: 'ams-status' });
+    new Setting(c)
+      .setName('Sync now')
+      .setDesc('Clone or pull, merge, commit local changes, push.')
+      .addButton((b) =>
+        b
+          .setCta()
+          .setButtonText('Sync now')
+          .onClick(async () => {
+            b.setDisabled(true);
+            result.empty();
+            result.createDiv({ cls: 'ams-status-line ams-muted', text: 'Syncing…' });
+            const r = await this.host.syncNow();
+            result.empty();
+            result.createDiv({
+              cls: `ams-status-line ams-${r.ok ? 'ok' : 'err'}`,
+              text: r.ok ? `✓ ${r.message}` : r.message,
+            });
+            new Notice(`Agentage Sync: ${r.message}`);
+            b.setDisabled(false);
+          })
       );
   }
 
