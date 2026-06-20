@@ -1,4 +1,4 @@
-import { FileSystemAdapter, Menu, Notice, Platform, Plugin, requestUrl, setIcon } from 'obsidian';
+import { FileSystemAdapter, Menu, Notice, Platform, Plugin, requestUrl } from 'obsidian';
 import type { FsClient, MergeDriverCallback } from 'isomorphic-git';
 import { type AgentageMemorySettings, DEFAULT_SETTINGS, normalizeVaultName } from './settings';
 import { AgentageMemorySettingTab, type SettingsHost } from './settings-tab';
@@ -24,6 +24,7 @@ import { HostResolver, buildRepoUrl } from './resolve-host';
 
 const AUTH_ORIGIN = 'https://auth.agentage.io';
 const SYNC_ORIGIN = 'https://sync.agentage.io';
+const DASHBOARD_ORIGIN = 'https://dashboard.agentage.io';
 const SITE_FQDN = 'agentage.io';
 
 // 3-way merge driver: split-YAML field-LWW + diff3 body (see git/merge-note).
@@ -47,7 +48,6 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   settings: AgentageMemorySettings = DEFAULT_SETTINGS;
   isDesktop = Platform.isDesktopApp;
   private statusBar?: HTMLElement;
-  private statusEl?: HTMLElement;
   private settingTab?: AgentageMemorySettingTab;
   private auth!: AuthFlow;
   private resolver!: HostResolver;
@@ -74,8 +74,6 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     const sb = this.addStatusBarItem();
     this.statusBar = sb;
     sb.addClass('ams-statusbar', 'mod-clickable');
-    setIcon(sb.createSpan({ cls: 'ams-sb-icon' }), 'refresh-cw');
-    this.statusEl = sb.createSpan({ cls: 'ams-sb-text' });
     this.registerDomEvent(sb, 'click', (evt) => this.showStatusMenu(evt));
     this.refreshStatus();
 
@@ -199,22 +197,12 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     this.refreshStatus();
   }
 
-  /** Status bar: colored dot (green ready / red error / gray signed-out) + tooltip. */
+  /** Status bar: colored dot only (green ready / red error / gray signed-out) + tooltip. */
   private refreshStatus(): void {
-    if (!this.statusBar || !this.statusEl) return;
+    if (!this.statusBar) return;
     const signedIn = !!this.auth && this.auth.isSignedIn();
     const erroring = this.syncState === 'error' || this.syncState === 'conflict';
     const tone = !signedIn ? 'gray' : erroring ? 'red' : 'green';
-    const text = !signedIn
-      ? 'Agentage: sign in'
-      : this.syncState === 'syncing'
-        ? 'Agentage: syncing…'
-        : this.syncState === 'error'
-          ? 'Agentage: error'
-          : this.syncState === 'conflict'
-            ? 'Agentage: conflict'
-            : 'Agentage: synced';
-    this.statusEl.setText(text);
     this.statusBar.removeClass('ams-sb--green', 'ams-sb--red', 'ams-sb--gray');
     this.statusBar.addClass(`ams-sb--${tone}`);
     const tip = !signedIn
@@ -228,7 +216,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     this.statusBar.setAttribute('title', tip);
   }
 
-  /** Click the status bar → context menu (sign in, or sync / settings / disconnect). */
+  /** Click the status bar → context menu (sign in, or sync / dashboard / settings). */
   private showStatusMenu(evt: MouseEvent): void {
     const menu = new Menu();
     if (this.isSignedIn()) {
@@ -240,15 +228,15 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       );
       menu.addItem((i) =>
         i
-          .setTitle('Open settings')
-          .setIcon('settings')
-          .onClick(() => this.openSettings())
+          .setTitle('Open dashboard')
+          .setIcon('layout-dashboard')
+          .onClick(() => this.openDashboard())
       );
       menu.addItem((i) =>
         i
-          .setTitle('Disconnect')
-          .setIcon('log-out')
-          .onClick(() => void this.disconnect())
+          .setTitle('Open settings')
+          .setIcon('settings')
+          .onClick(() => this.openSettings())
       );
     } else {
       menu.addItem((i) =>
@@ -273,6 +261,11 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     };
     app.setting?.open?.();
     app.setting?.openTabById?.(this.manifest.id);
+  }
+
+  /** Open this vault's memories in the Agentage dashboard (browser). */
+  private openDashboard(): void {
+    window.open(`${DASHBOARD_ORIGIN}/memories/${encodeURIComponent(this.vaultNameOf())}`, '_blank');
   }
 
   vaultRootPath(): string {
