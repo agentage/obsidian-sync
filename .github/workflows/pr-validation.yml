@@ -17,7 +17,7 @@ jobs:
   validate:
     name: 🔍 Validate Pull Request
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
       - name: Checkout code
@@ -68,57 +68,6 @@ jobs:
         if: always() && steps.build.outcome == 'success'
         run: npm run check:bundle
 
-      - name: Install Obsidian + Xvfb + window manager for E2E
-        id: e2e-setup
-        if: always() && steps.build.outcome == 'success'
-        run: ./scripts/e2e/install-obsidian.sh
-
-      - name: Start Xvfb + window manager
-        id: display
-        if: always() && steps.e2e-setup.outcome == 'success'
-        run: ./scripts/e2e/start-display.sh
-
-      - name: Pre-configure Obsidian (test vault, plugin symlink, vault registry)
-        id: e2e-vault
-        if: always() && steps.e2e-setup.outcome == 'success'
-        run: ./scripts/e2e/setup-vault.sh
-
-      - name: Start CouchDB for sync E2E
-        id: e2e-couchdb
-        if: always() && steps.e2e-vault.outcome == 'success'
-        run: |
-          docker compose up -d
-          for i in $(seq 1 30); do
-            if curl -fsS http://localhost:5984/_up >/dev/null 2>&1; then
-              echo "CouchDB ready at t=${i}s"; break
-            fi
-            sleep 1
-          done
-          curl -sS -u admin:agentage http://localhost:5984/_up
-
-      - name: E2E smoke tests
-        id: e2e
-        if: always() && steps.e2e-couchdb.outcome == 'success'
-        env:
-          OBSIDIAN_BIN: /opt/Obsidian/obsidian
-          OBSIDIAN_VAULT: /tmp/obsidian-test-vault
-          COUCHDB_URL: http://localhost:5984
-          COUCHDB_USER: admin
-          COUCHDB_PASSWORD: agentage
-          COUCHDB_DB: agentage-memory-e2e
-        run: npm run test:e2e
-
-      - name: Upload E2E artifacts
-        if: always() && steps.e2e.outcome != 'skipped'
-        uses: actions/upload-artifact@v7
-        with:
-          name: e2e-results-${{ github.run_id }}
-          path: |
-            test-results/
-            playwright-report/
-          if-no-files-found: ignore
-          retention-days: 7
-
       - name: Comment on PR
         if: always()
         uses: actions/github-script@v9
@@ -132,11 +81,8 @@ jobs:
               { name: 'Format check passed', outcome: '${{ steps.format.outcome }}' },
               { name: 'Tests + coverage passed', outcome: '${{ steps.test.outcome }}' },
               { name: 'Build successful', outcome: '${{ steps.build.outcome }}' },
-              { name: 'Obsidian installed for E2E', outcome: '${{ steps.e2e-setup.outcome }}' },
-              { name: 'Xvfb + window manager started', outcome: '${{ steps.display.outcome }}' },
-              { name: 'Test vault + plugin symlink ready', outcome: '${{ steps.e2e-vault.outcome }}' },
-              { name: 'CouchDB up for sync E2E', outcome: '${{ steps.e2e-couchdb.outcome }}' },
-              { name: 'E2E smoke tests passed', outcome: '${{ steps.e2e.outcome }}' },
+              { name: 'Store-compliance checks passed', outcome: '${{ steps.store-checks.outcome }}' },
+              { name: 'Bundle is mobile-safe', outcome: '${{ steps.bundle-check.outcome }}' },
             ];
             const allPassed = checks.every((c) => c.outcome === 'success');
             const status = allPassed ? '✅ PASSED' : '❌ FAILED';

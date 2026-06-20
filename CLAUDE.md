@@ -1,62 +1,42 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in this repository.
 
 ## Project Overview
 
-**Agentage Memory — Obsidian plugin.** Syncs an Obsidian vault to the user's private Agentage Memory so every AI client (Claude, ChatGPT, Cursor, …) reads and writes the same notes. The plugin is a **CouchDB replication client** (PouchDB local replica ↔ per-tenant CouchDB); AI clients reach the same memory via the cloud MCP at `memory.agentage.io`.
+**Agentage Sync — Obsidian plugin.** A configuration page + bidirectional **git** sync between an Obsidian vault and the user's agentage Memory, plus OAuth sign-in. AI clients reach the same memory over MCP at `memory.agentage.io`.
 
-**Repository:** `agentage/obsidian-memory`
-**Default Branch:** `master`
-**Plugin id:** `agentage-memory` · **Display name:** `Agentage Memory`
+- **Plugin id:** `agentage-memory` (locked — the install/auto-update key) · **Display name:** `Agentage Sync`
+- **Repo:** `agentage/obsidian-memory` · **Default branch:** `master`
+- The plugin is a **git client** (vendored `isomorphic-git` over Obsidian `requestUrl`) talking to the agentage git server at `sync.agentage.io`; the store is one bare git repo per vault, server-authoritative. Plaintext markdown end to end (no client E2E) so the cloud can `git grep` it.
 
-## Development Commands
+## Architecture (`src/`)
+
+- **Config** — `settings.ts` (pure model mirroring memory-core `vaults.json`), `settings-tab.ts` (the page: Connect · Setup sync · Expose local/remote MCP · MCP address · config file), `vaults-config.ts` (merge-preserving `~/.agentage/vaults.json` writer; desktop, atomic).
+- **Auth** (`auth/`) — `pkce.ts` (S256), `oauth.ts` (DCR + token exchange/refresh/revoke; public PKCE client), `discovery.ts` (`/.well-known/oauth-authorization-server`), `token-store.ts` (`app.secretStorage` + the `auth.json` mirror), `auth-json.ts` (desktop `~/.agentage/auth.json`, atomic 0600, CLI shape), `auth-flow.ts` (DI orchestration: startSignIn/handleCallback/getValidToken-with-refresh/disconnect/isSignedIn). AS = Better Auth at `auth.agentage.io`; custom-scheme redirect `obsidian://agentage-memory-cb`.
+- **Git** (`git/`) — `git-client.ts` (DI clone/fetch/pull/push/merge; full single-branch, token-in-header, **never force**), `merge-note.ts` (split-YAML field-LWW + diff3 body), `backup-ref.ts`, `http-requesturl.ts` (requestUrl `HttpClient`), `vault-fs.ts` (mobile `vault.adapter` fs-shim — built, not yet wired), `stream-utils.ts`, `git-test-server.ts` (test-only `git-http-backend`).
+- **Sync** — `resolve-host.ts` (`/.well-known/agentage-sync` + 1h cache), `sync-controller.ts` (single-flight lifecycle: ensure repo → commit-before-pull → merge → conflict note → push).
+- **Entry** — `main.ts` (wires Obsidian adapters: secretStorage, requestUrl, node fs on desktop, the ribbon/status-bar/command). Obsidian-coupled files are coverage-excluded; the rest is unit/integration-tested.
+
+## Key invariants
+- **Client owns history.** The server is plain git (force-push allowed, no fast-forward-only), so the plugin **never force-pushes**; it commits-before-pull, 3-way merges, and surfaces conflicts (markers + a `conflict:true` note). Never silent-drop.
+- **Tokens** live in `app.secretStorage` + `~/.agentage/auth.json` (0600) — **never** `vaults.json`/`data.json`.
+- **isomorphic-git gotchas:** token via `onAuth` header only (never the URL, #1942); full single-branch clone (no `depth` — shallow breaks push, #682); no gc (re-clone on bloat — mobile, future).
+- **Merge:** split YAML frontmatter before diff3 (markers inside `---` corrupt the note).
+- **Desktop** uses node fs (the tested path); mobile (`vault.adapter` via `vault-fs.ts`) is a later milestone.
+
+## Development
 
 ```bash
-npm install          # Install dependencies
-npm run dev          # esbuild watch (rebuild main.js on change)
-npm run build        # Production bundle -> main.js
-npm run type-check   # tsc --noEmit
-npm run lint         # ESLint
-npm run format:check # Prettier check
-npm run test         # Vitest unit tests
-npm run verify       # Full gate: type-check + lint + format:check + test + build
-npm run clean        # Remove build output + coverage
-npm version <x.y.z>  # Bump manifest.json + versions.json (Obsidian release prep)
+npm install
+npm run dev          # esbuild watch -> main.js
+npm run build        # production main.js
+npm test             # vitest (spawns git-http-backend; needs the git binary)
+npm run verify       # type-check + lint + format + test + build + check:hosts/docs/bundle
+npm version <x.y.z>  # bump manifest.json + versions.json (release prep)
 ```
 
-## Architecture
+App-level e2e (Playwright-Electron + the live `sync`/`auth` wire) lives in **`agentage/e2e`** (`tests/obsidian`, `tests/sync`), not this repo.
 
-```
-src/
-├── main.ts            # Obsidian entry: thin Plugin adapter, wires deps into the controller
-├── sync-controller.ts # createSyncController closure — owns sync state + lifecycle
-├── settings.ts        # Settings type, defaults, pure helpers (no Obsidian import)
-├── settings-tab.ts    # PluginSettingTab UI, drives the controller
-├── pouch.ts           # local PouchDB store (testable) ── replication.ts # remote CouchDB (E2E)
-├── inbound.ts         # apply-pulled + seed logic (Obsidian-free, testable)
-├── vault-watcher.ts   # vault→cloud event wiring ── status-bar.ts # status-bar render
-└── *.test.ts          # Vitest unit tests, colocated
-manifest.json          # Obsidian plugin manifest (id, version, minAppVersion)
-versions.json          # plugin version -> minAppVersion map
-esbuild.config.mjs     # Bundler (TS -> cjs main.js)
-```
-
-Layering: **Obsidian-coupled** (`main`, `sync-controller`, `settings-tab`, `vault-watcher`, `status-bar`, `obsidian-vault-gateway`, `obsidian-fetch`, `auth-flow`) + **HTTP-coupled** (`replication`) are coverage-excluded / E2E-covered; everything else is dependency-free and unit-tested.
-
-**Auth.** OAuth sign-in (GoTrue, PKCE S256, no DCR): `pkce.ts` (verifier/challenge/authorize-URL — tested), `oauth.ts` (token exchange/refresh over an injected `HttpPost` — tested), `token-store.ts` (access/refresh tokens in `app.secretStorage` — tested), `auth-flow.ts` (Obsidian/Electron glue: `requestUrl`, external browser, `obsidian://agentage-memory-cb` callback). Sign-in establishes the Agentage *identity*. When signed in, the controller trades the account token for a per-tenant sync target via `bootstrap.ts` (`requestSyncBootstrap` → `POST /api/sync/bootstrap` → `{syncUrl, dbName, token, expiresAt}`) and replicates with a `bearerAuthProvider` (refreshed on expiry) — no stored CouchDB password. Signed out (or local-dev / e2e), it falls back to the Basic-creds path. The backend endpoint is pending → the authed e2e (`auth-sync.spec.ts`) is `BOOTSTRAP_URL`-gated.
-
-**Dependency injection (factory pattern, no container).** `createSyncController(deps)` takes a single typed `SyncDeps` object — Obsidian capabilities (`app`, `secrets`, `load`/`save`, `registerEvent`, `statusBar`) — and returns a singleton `SyncController` interface. All state lives in closure variables, not instance fields. Obsidian-coupled code stays in `main.ts` / `obsidian-vault-gateway.ts`; `sync-controller.ts` and the rest of `src/` stay dependency-free and unit-testable. Mirrors the house Service-Provider DI pattern (factory + singleton + deps-as-params).
-
-## Plugin-specific conventions (Obsidian platform)
-
-- **Entry is a DEFAULT export.** `main.ts` exports the `Plugin` subclass as default — Obsidian requires it. This is the _only_ default export; everything else uses **named exports** (project standard).
-- **Build output is CommonJS.** esbuild bundles to `main.js` (`format: 'cjs'`); `obsidian`/`electron`/node builtins are externals. `main.js` is git-ignored and attached to GitHub Releases.
-- **`minAppVersion` ≥ 1.11.4** — required for `app.secretStorage` (OAuth tokens go there, never `data.json`, which is plaintext).
-- **`isDesktopOnly: false`** — PouchDB/IndexedDB works on mobile; keep the flag (flipping it later re-triggers store review). Mobile _testing_ is deferred for v1.
-- **Pure logic out of `main.ts`.** Code that imports `obsidian` can't be unit-tested (no runtime in Vitest); keep testable logic in dependency-free modules (e.g. `settings.ts`).
-- **Store compliance:** `normalizePath()` on every vault path; **no client-side telemetry**; README must disclose network hosts + account/payment requirements.
-
-## Stack & standards
-
-Node 22+, TypeScript strict (ES2024, ESM source). esbuild bundle, Vitest tests (70% coverage gate), ESLint + Prettier. Named exports, files < 200 lines, conventional commits (`feat:`/`fix:`/`chore:`), branches `feature/*` `bugfix/*` `hotfix/*`. PRs gated by `pr-validation.yml` (type-check + lint + format + test + build). Inherits the global Agentage coding standards.
+## Conventions
+Node 22+, TypeScript strict (ES2024, ESM), esbuild → CommonJS `main.js`. Named exports only (the sole default export is the `Plugin` subclass in `main.ts`). Vitest. ESLint + Prettier (incl. `eslint-plugin-obsidianmd` store rules). `minAppVersion 1.11.4` (secretStorage), `isDesktopOnly: false`. `normalizePath()` on vault paths; **no client-side telemetry**; the README must disclose network hosts + account/payment requirements (enforced by `check:docs`/`check:hosts`). Conventional commits. Inherits the global Agentage standards (`~/projects/CLAUDE.md`).

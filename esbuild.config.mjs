@@ -14,8 +14,8 @@ const context = await esbuild.context({
   entryPoints: ['src/main.ts'],
   bundle: true,
   external: ['obsidian', 'electron', ...builtins],
-  // PouchDB ships as browser code; tell esbuild to use browser resolution
-  // and stub a few Node globals it references.
+  // Browser platform so the bundle is mobile-safe; isomorphic-git + diff3 + js-yaml
+  // are pure-JS. A couple of Node globals are shimmed for browser resolution.
   platform: 'browser',
   define: {
     global: 'window',

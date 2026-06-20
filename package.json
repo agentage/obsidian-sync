@@ -20,7 +20,6 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "playwright test",
     "clean": "rm -rf main.js *.map coverage",
     "version": "node version-bump.mjs && git add manifest.json versions.json",
     "check:hosts": "node scripts/check-hosts.mjs",
@@ -38,7 +37,6 @@
   "author": "agentage",
   "license": "SEE LICENSE IN LICENSE",
   "devDependencies": {
-    "@playwright/test": "1.61.0",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.0.0",
     "@typescript-eslint/eslint-plugin": "^8.61.1",

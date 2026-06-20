@@ -44,11 +44,11 @@ export const DEFAULT_SETTINGS: AgentageMemorySettings = {
   vaultName: '', // empty -> derived from the Obsidian vault name (see main.vaultName())
   path: '',
   makeDefault: true,
-  syncEnabled: false,
+  syncEnabled: true, // on by default; once signed in, the vault syncs
   // ignore starts empty; the sync engine ignores the config folder dynamically via
   // Vault#configDir (it is user-configurable, never hardcode '.obsidian').
-  origin: { remote: '', interval: 5, ignore: [] },
-  mcp: ['local'],
+  origin: { remote: AGENTAGE_REMOTE, interval: 5, ignore: [] },
+  mcp: ['remote'], // expose to AI apps over MCP by default (local MCP is out of scope here)
   configDir: '~/.agentage',
   showAdvanced: false,
   writtenVaultName: '',
@@ -125,11 +125,9 @@ export const buildVaultsConfig = (
 /** UI validation — mirrors memory-core validateConfig's two semantic rules. */
 export const validateSettings = (s: AgentageMemorySettings): string[] => {
   const errs: string[] = [];
-  if (!normalizeVaultName(s.vaultName)) errs.push('Vault name is required.');
+  // The vault name auto-derives (main.vaultName) and the remote defaults to the managed
+  // "agentage" alias, so there is nothing the user must fix here in normal use.
   if (s.syncEnabled && !normalizeRemote(s.origin.remote))
-    errs.push(
-      'Sync is on but no remote — click “Connect to agentage” or set a remote URL in Advanced.'
-    );
-  // memory-core: a vault needs origin and/or path; path always defaults to the vault folder.
+    errs.push('Sync is on but no remote is configured.');
   return errs;
 };

@@ -1,93 +1,61 @@
-# Agentage Memory — Obsidian plugin
+# Agentage Sync — Obsidian plugin
 
 **One memory. Every AI. Owned by you.**
 
-Sync your Obsidian notes to your private [Agentage Memory](https://agentage.io) — the shared memory layer for every AI — so Claude, ChatGPT, Cursor, and any MCP client read and write the *same* memory. Your notes stay as plain Markdown files you own and can export anytime.
+Two-way **Git** sync between your Obsidian vault and your private [Agentage Memory](https://agentage.io) — the shared memory layer for every AI — so Claude, ChatGPT, Cursor, and any MCP client read and write the *same* Markdown you own. Your notes are plain `.md` files in a git repo you can clone or export anytime.
 
-> **Status:** early access (v0.1.0). Account sign-in (OAuth) and two-way replication against a CouchDB endpoint — initial vault seeding and concurrent-edit conflict handling — work today. Turnkey sync to the hosted Agentage Memory cloud (automatic endpoint + per-tenant credentials) is in progress; until it lands you point the plugin at your own CouchDB. See [agentage.io](https://agentage.io).
+> **Status:** desktop git sync + Agentage sign-in (OAuth 2.1 / PKCE) work today. Mobile and automatic background sync are next.
 
 ## How it works
 
-- Your notes stay as normal `.md` files in your Obsidian vault.
-- The plugin syncs them to your private Agentage Memory cloud and pulls changes back.
-- Any AI tool connected to agentage sees the same notes — edit in Obsidian, your AI sees it; your AI writes, it shows up in Obsidian.
+- Your notes stay as normal `.md` files in your vault — and as a bare git repo per vault on the server, which is the source of truth.
+- **Connect** signs you in to Agentage once (browser, no password stored by the plugin); the token is kept in Obsidian's encrypted secret storage.
+- **Sync** clones/pulls/commits/pushes your vault to `sync.agentage.io` over Git, authenticated with that token. Concurrent edits are reconciled with a 3-way merge (per-field frontmatter + diff3 body); conflicts surface as markers + a note, never a silent drop.
+- The same memory is exposed over MCP at `memory.agentage.io`, so every AI reads and writes the same notes.
+
+## Setup
+
+1. **Settings → Agentage Sync → Connect to agentage** — sign in.
+2. **Expose local / remote MCP** — let your AI apps read and write this memory; copy the MCP address into Claude / ChatGPT / Cursor.
+3. **Command palette → "Agentage Sync: Sync now"** — back up and pull. (Background auto-sync is on the roadmap.)
 
 ## Install
 
-The plugin isn't in the community store yet. Two ways to install it today:
+Not in the community store yet. Two ways:
 
-**Manual** — from the [latest release](https://github.com/agentage/obsidian-memory/releases/latest), download `main.js`, `manifest.json`, and `styles.css` into `<your-vault>/.obsidian/plugins/agentage-memory/`, then enable **Agentage Memory** under Settings → Community plugins.
+**Manual** — from the [latest release](https://github.com/agentage/obsidian-memory/releases/latest), copy `main.js`, `manifest.json`, and `styles.css` into `<your-vault>/.obsidian/plugins/agentage-memory/`, then enable **Agentage Sync** under Settings → Community plugins.
 
-**BRAT** — install the [BRAT](https://github.com/TfTHacker/obsidian42-brat) plugin, then *Add beta plugin* → `agentage/obsidian-memory`. BRAT keeps it updated as new releases ship.
-
-After enabling, open Settings → Agentage Memory and point **Server URL** at your Agentage Memory endpoint.
+**BRAT** — install [BRAT](https://github.com/TfTHacker/obsidian42-brat), then *Add beta plugin* → `agentage/obsidian-memory`.
 
 ## Develop
 
 ```bash
 npm install        # install dependencies
-npm run dev        # watch + rebuild on change
-npm run build      # production bundle (main.js)
-npm run verify     # full gate: type-check + lint + format + test + build
+npm run dev        # watch + rebuild main.js
+npm run build      # production bundle
+npm run verify     # type-check + lint + format + test + build + doc/host/bundle checks
 ```
 
-To test in Obsidian, symlink or copy this folder to
-`<your-vault>/.obsidian/plugins/agentage-memory/` (needs `main.js`, `manifest.json`, `styles.css`),
-then enable **Agentage Memory** under Settings → Community plugins.
-
-### Local CouchDB (for sync development)
-
-A throwaway local CouchDB (with CORS pre-configured for Obsidian) is provided via Docker Compose:
-
-```bash
-npm run couchdb:up      # start CouchDB on http://localhost:5984 (admin / agentage)
-npm run couchdb:down    # stop containers
-npm run couchdb:reset   # stop + drop the data volume
-```
-
-In the plugin settings (Settings → Agentage Memory), set **Server URL** to `http://localhost:5984` (Username `admin`, Password `agentage` defaults match) and click **Test connection** — you should see *Connected (HTTP 200)*.
-
-Then open any note and run **Command Palette → "Push current note to Agentage Memory"**. The note is written as one whole document with `_id = <vault-path>`. Verify on the server:
-
-```bash
-curl -sS -u admin:agentage http://localhost:5984/agentage-memory/_all_docs
-```
-
-### End-to-end tests (Playwright Electron)
-
-```bash
-npm run test:e2e          # launches Obsidian + drives it via Playwright
-OBSIDIAN_BIN=/path npm run test:e2e   # override binary location
-```
-
-**Snap caveat:** Snap-installed Obsidian on Linux runs in a confined sandbox; Playwright may fail to attach. If you hit permission errors, install the AppImage version from <https://obsidian.md/download>, make it executable, and point `OBSIDIAN_BIN` at it.
-
-**CI:** these tests **run on every PR**. The workflow installs the latest Obsidian `.deb` into the Ubuntu runner, points `OBSIDIAN_BIN` at `/opt/Obsidian/obsidian`, and drives Playwright under `xvfb-run`. Failures upload `test-results/` + `playwright-report/` as workflow artifacts.
+Tests run in Node with Vitest (the git round-trips spawn git's own `git-http-backend`, so the `git` binary must be on `PATH`). App-level end-to-end tests (real Obsidian + the live sync/auth wire) live in the `agentage/e2e` repo.
 
 ## Privacy & network use
 
 - **Account required:** you need an agentage account to sign in and sync.
-- **Optional payments:** Agentage Memory has a free tier; paid plans are optional. See [agentage.io](https://agentage.io) for current plans.
-- **No calls until you act:** a fresh or signed-out install makes **no network requests at all**. The plugin only contacts the network once you sign in or point it at a sync endpoint with credentials.
-- **Network use — a single host:** when active, the plugin talks to **one host only, `sync.agentage.io`** (or the endpoint you configure, e.g. a local CouchDB): account sign-in (OAuth 2.1 / PKCE), obtaining your short-lived sync credentials, and replicating your notes. No other host is contacted.
+- **Optional payments:** Agentage Memory has a free tier; paid plans are optional. See [agentage.io](https://agentage.io).
+- **No calls until you act:** a fresh or signed-out install makes **no network requests at all**. The plugin only contacts the network once you Connect or Sync.
+- **Network use:** when active, the plugin contacts `auth.agentage.io` (sign-in, OAuth 2.1 / PKCE) and **`sync.agentage.io`** (cloning and syncing your vault over Git). AI access to the same memory happens server-side over MCP at `memory.agentage.io`.
 - **Privacy policy:** <https://agentage.io/privacy>. **Terms of Service:** <https://agentage.io/terms> (your right to use the plugin is granted under these — see [`LICENSE`](./LICENSE)).
-- **No client-side telemetry.** Your notes are stored in your own per-tenant store (EU-hosted) and mirrored to plain Markdown on your machine.
+- **No client-side telemetry.** Your notes live in your own per-tenant git repo (EU-hosted) and as plain Markdown on your machine; the OAuth token is kept in Obsidian's encrypted secret storage, never in `vaults.json` or `data.json`.
 
 ## Third-party
 
-- **PouchDB** ([Apache-2.0](https://github.com/pouchdb/pouchdb/blob/master/LICENSE)) — bundled to provide the local replica and CouchDB replication.
+- **isomorphic-git** ([MIT](https://github.com/isomorphic-git/isomorphic-git/blob/main/LICENSE.md)) — pure-JS git client (clone/pull/push over `requestUrl`, desktop + mobile).
+- **js-yaml** (MIT) + **diff3** — frontmatter parsing and 3-way merge.
 
 ## Releasing (maintainers)
 
-```bash
-npm version patch          # bumps package.json + manifest.json + versions.json, commits, tags (bare, no `v`)
-git push --follow-tags     # pushes the commit + tag → .github/workflows/release.yml builds + publishes the GitHub Release
-```
-
-The tag must equal `manifest.json` `version` (Obsidian requirement); the workflow guards this and attaches `main.js`, `manifest.json`, `styles.css`.
+See [`RELEASING.md`](./RELEASING.md). `npm version <x.y.z>` bumps `manifest.json` + `versions.json` and tags; pushing the tag fires `.github/workflows/release.yml`, which attaches `main.js`, `manifest.json`, `styles.css` (tag must equal `manifest.json` `version`).
 
 ## License
 
-**Proprietary — All Rights Reserved.** Copyright © 2026 agentage.
-
-The source is published here for transparency and security review. End users may run the plugin inside Obsidian under the terms in [`LICENSE`](./LICENSE); no rights to fork, redistribute, or build derivative works are granted. For commercial licensing, contact `hello@agentage.io`.
+**Proprietary — All Rights Reserved.** Copyright © 2026 agentage. Published for transparency and security review; end users may run it in Obsidian under [`LICENSE`](./LICENSE). For commercial licensing, contact `hello@agentage.io`.

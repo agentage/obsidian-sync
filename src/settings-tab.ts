@@ -68,39 +68,18 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
         );
     } else {
       connect
-        .setName('Connect')
-        .setDesc('Sign in to Agentage to back up and share this memory.')
+        .setName('Agentage Sync')
+        .setDesc('Sign in to start syncing this vault with your Agentage Memory.')
         .addButton((b) =>
           b
             .setCta()
-            .setButtonText('Connect to agentage')
+            .setButtonText('Start sync with agentage')
             .onClick(() => this.host.openSignIn())
         );
     }
     connect.nameEl.addClass('ams-big');
 
-    // ---- The simple controls ----
-    new Setting(containerEl)
-      .setName('Setup sync')
-      .setDesc(
-        s.syncEnabled
-          ? 'On — your notes are backed up and synced across your devices.'
-          : 'Back up this vault and keep all your devices in sync.'
-      )
-      .addToggle((t) =>
-        t.setValue(s.syncEnabled).onChange((v) => {
-          s.syncEnabled = v;
-          this.touch();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName('Expose local MCP')
-      .setDesc('Let AI apps on this computer read and write your notes.')
-      .addToggle((t) =>
-        t.setValue(s.mcp.includes('local')).onChange((v) => this.setScope('local', v))
-      );
-
+    // ---- AI access over MCP (on by default) ----
     new Setting(containerEl)
       .setName('Expose remote MCP')
       .setDesc('Let AI apps anywhere — Claude, ChatGPT, Cursor — read and write your notes.')
@@ -125,18 +104,6 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
         b.setButtonText('Copy').onClick(async () => {
           await navigator.clipboard.writeText(MCP_ENDPOINT);
           new Notice('MCP address copied');
-        })
-      );
-
-    new Setting(containerEl)
-      .setName('Configuration file')
-      .setDesc(
-        `${s.configDir}/vaults.json — edit it directly to fine-tune sync (interval, ignored files, a custom git remote). Your edits are kept.`
-      )
-      .addButton((b) =>
-        b.setButtonText('Copy path').onClick(async () => {
-          await navigator.clipboard.writeText(`${s.configDir}/vaults.json`);
-          new Notice('Path copied');
         })
       );
   }

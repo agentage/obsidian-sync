@@ -37,7 +37,7 @@ export default [
     rules: {
       ...prettierConfig.rules,
       ...obsidianmdRules,
-      // Its suggestions lowercase proper nouns (Agentage, GoTrue, CouchDB),
+      // Its suggestions lowercase proper nouns (Agentage, Markdown, MCP),
       // URLs, and input placeholders — wrong for our copy. Store reviewers apply
       // sentence-case with judgment the rule can't; the rest of the ruleset stays on.
       'obsidianmd/ui/sentence-case': 'off',
