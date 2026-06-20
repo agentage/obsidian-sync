@@ -21,6 +21,7 @@ import { createAuthJsonWriter, readAuthJsonState } from './auth/auth-json';
 import type { HttpPost } from './auth/oauth';
 import type { GetJson } from './auth/discovery';
 import { HostResolver, buildRepoUrl } from './resolve-host';
+import { openMemoryChooser } from './memory-chooser';
 
 const AUTH_ORIGIN = 'https://auth.agentage.io';
 const SYNC_ORIGIN = 'https://sync.agentage.io';
@@ -85,6 +86,11 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       id: 'sync-now',
       name: 'Sync now',
       callback: () => void this.syncNow().then((r) => new Notice(`Agentage Sync: ${r.message}`)),
+    });
+    this.addCommand({
+      id: 'choose-memory',
+      name: 'Choose memory',
+      callback: () => this.chooseMemory(),
     });
   }
 
@@ -232,6 +238,12 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       );
       menu.addItem((i) =>
         i
+          .setTitle('Choose memory…')
+          .setIcon('library')
+          .onClick(() => this.chooseMemory())
+      );
+      menu.addItem((i) =>
+        i
           .setTitle('Open dashboard')
           .setIcon('layout-dashboard')
           .onClick(() => this.openDashboard())
@@ -329,6 +341,19 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
 
   defaultVaultName(): string {
     return normalizeVaultName(this.app.vault.getName()) || 'personal';
+  }
+
+  /** Set the memory this vault syncs into, persist, and refresh the UI. */
+  async selectVault(name: string): Promise<void> {
+    this.settings.vault = name;
+    await this.saveSettings();
+    new Notice(`Agentage memory: ${name}`);
+    this.onAuthChanged(); // re-render settings + status bar
+  }
+
+  /** Open the memory chooser popup (pick existing or create new). */
+  chooseMemory(): void {
+    void openMemoryChooser(this.app, this);
   }
 
   // --- auth (SettingsHost) ---

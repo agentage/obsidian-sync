@@ -77,6 +77,15 @@ export function createSyncController(deps: SyncControllerDeps) {
     }
   }
 
+  // Local branch head, or null when `main` is unborn (repo init'd, no commit yet).
+  async function localHead(ctx: RepoCtx): Promise<string | null> {
+    try {
+      return await deps.client.resolveRef(ctx, ref);
+    } catch {
+      return null;
+    }
+  }
+
   async function dirIsEmpty(): Promise<boolean> {
     let entries: string[] = [];
     try {
@@ -141,9 +150,24 @@ export function createSyncController(deps: SyncControllerDeps) {
       return { action: 'seeded', committed: staged > 0, pushed: true, conflicted: [] };
     }
 
-    // existing repo: backup HEAD → COMMIT local first (commit-before-pull, so a merge
+    // existing local repo. Ask the SERVER whether the target memory has commits (not the
+    // local origin/<ref>, which is stale after switching vaults): a just-created memory has
+    // no `main`, so there is nothing to pull/merge — seed it (commit local + push) instead
+    // of pulling, which would throw "could not get main".
+    const remoteHasHistory = await deps.client.remoteHasRef(ctx);
+    if (!remoteHasHistory) {
+      const staged = await stageChanges(ctx, new Set());
+      if (staged > 0) await deps.client.commit(ctx, `Sync ${deps.now()}`);
+      const pushed = (await localHead(ctx)) !== null; // nothing to push if local is empty too
+      if (pushed) await deps.client.push(ctx);
+      status('idle');
+      return { action: 'seeded', committed: staged > 0, pushed, conflicted: [] };
+    }
+
+    // remote has history: backup HEAD → COMMIT local first (commit-before-pull, so a merge
     // never has to overwrite uncommitted work) → pull(merge) → surface conflicts → push.
-    await snapshotBackupRef(deps.fs, { dir: deps.dir, gitdir, ref }, deps.now());
+    if (await localHead(ctx))
+      await snapshotBackupRef(deps.fs, { dir: deps.dir, gitdir, ref }, deps.now());
     const staged = await stageChanges(ctx, new Set());
     if (staged > 0) await deps.client.commit(ctx, `Sync ${deps.now()}`);
 

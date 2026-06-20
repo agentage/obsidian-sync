@@ -12,12 +12,8 @@ export interface SettingsHost {
   isSignedIn(): boolean;
   disconnect(): Promise<void>;
   applyConfig(): Promise<ApplyResult>;
-  /** Existing server memories for this account (from the sync host); [] if signed out. */
-  listVaults(): Promise<string[]>;
-  /** Create a new server memory via the create API, then it becomes syncable. */
-  createVault(name: string): Promise<{ ok: boolean; vault?: string; error?: string }>;
-  /** Suggested name for a new memory (the normalized Obsidian vault name). */
-  defaultVaultName(): string;
+  /** Open the memory chooser popup (pick an existing memory or create a new one). */
+  chooseMemory(): void;
 }
 
 export class AgentageMemorySettingTab extends PluginSettingTab {
@@ -85,11 +81,18 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
     }
     connect.nameEl.addClass('ams-big');
 
-    // ---- Memory picker (only once signed in) — pick an existing memory or create one.
-    // Filled async (the list comes from the sync host); the div keeps the row order.
+    // ---- Memory (only once signed in): a button that opens the chooser popup ----
     if (this.host.isSignedIn()) {
-      const memEl = containerEl.createDiv();
-      void this.renderMemory(memEl);
+      const cur = s.vault;
+      new Setting(containerEl)
+        .setName('Memory')
+        .setDesc(cur ? `This vault syncs into "${cur}".` : 'No memory chosen yet.')
+        .addButton((b) =>
+          b
+            .setCta()
+            .setButtonText(cur ? 'Change memory…' : 'Choose memory…')
+            .onClick(() => this.host.chooseMemory())
+        );
     }
 
     // ---- AI access over MCP (on by default) ----
@@ -119,56 +122,6 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
           new Notice('MCP address copied');
         })
       );
-  }
-
-  /** Memory section: a dropdown of existing memories (Way 1) + a create row (Way 2). */
-  private async renderMemory(host: HTMLElement): Promise<void> {
-    host.empty();
-    const s = this.host.settings;
-    const vaults = await this.host.listVaults();
-
-    const pick = new Setting(host)
-      .setName('Memory')
-      .setDesc('Which Agentage memory this vault syncs into.');
-    pick.addDropdown((d) => {
-      if (!vaults.length) d.addOption('', '— none yet, create one below —');
-      for (const v of vaults) d.addOption(v, v);
-      const cur = vaults.includes(s.vault) ? s.vault : (vaults[0] ?? '');
-      if (cur !== s.vault) {
-        s.vault = cur;
-        void this.host.saveSettings();
-      }
-      d.setValue(cur).onChange((v) => {
-        s.vault = v;
-        void this.host.saveSettings();
-      });
-    });
-
-    // Create a new memory: API create -> empty repo -> first sync is a clean fast-forward.
-    let name = this.host.defaultVaultName();
-    const create = new Setting(host)
-      .setName('Create a new memory')
-      .setDesc('Makes a new memory on the server, then syncs this vault into it.');
-    create.addText((t) => {
-      t.setPlaceholder('my-notes').setValue(name);
-      t.inputEl.addClass('ams-mono');
-      t.onChange((v) => (name = v));
-    });
-    create.addButton((b) =>
-      b.setButtonText('Create').onClick(async () => {
-        b.setDisabled(true).setButtonText('Creating…');
-        const res = await this.host.createVault(name);
-        if (res.ok && res.vault) {
-          s.vault = res.vault;
-          await this.host.saveSettings();
-          new Notice(`Memory "${res.vault}" ready`);
-          await this.renderMemory(host); // refresh the dropdown with the new memory selected
-        } else {
-          new Notice(`Couldn't create memory: ${res.error ?? 'unknown error'}`);
-          b.setDisabled(false).setButtonText('Create');
-        }
-      })
-    );
   }
 
   /** Add/remove an MCP scope, then persist. */

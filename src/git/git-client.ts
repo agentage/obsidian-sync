@@ -148,6 +148,24 @@ export function createGitClient({ fs, http }: GitClientDeps, mergeDriver: MergeD
         return null;
       }
     },
+
+    // Does the REMOTE actually have <ref>? Asks the server (listServerRefs), so it is
+    // correct even when the local origin/<ref> tracking ref is stale from another vault.
+    async remoteHasRef(c: RepoCtx): Promise<boolean> {
+      const ref = c.ref ?? 'main';
+      try {
+        const refs = await git.listServerRefs({
+          http,
+          url: c.url,
+          onAuth: onAuth(c.token),
+          onAuthFailure,
+          prefix: `refs/heads/${ref}`,
+        });
+        return refs.length > 0;
+      } catch {
+        return false; // unreachable/empty → treat as "no ref"; a later push surfaces real errors
+      }
+    },
   };
   return client;
 }

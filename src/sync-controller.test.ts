@@ -57,6 +57,25 @@ describe('sync-controller (R10/R12 lifecycle + R15 conflict surfacing)', () => {
     expect(fs.readFileSync(path.join(B, 'note.md'), 'utf8')).toContain('# hi');
   });
 
+  it('syncs an existing local repo into a freshly-created EMPTY remote by seeding it (no "could not get main")', async () => {
+    const A = dir('A');
+    fs.writeFileSync(path.join(A, 'note.md'), 'hello\n');
+    await controllerFor(A).syncNow(opts()); // seeds app.git; A now has a local .git
+
+    // a brand-new memory, like POST /vaults makes it: a bare repo with no commits/main ref
+    execFileSync('git', ['init', '--bare', '-q', '-b', 'main', path.join(root, 'fresh.git')]);
+    const freshUrl = srv.url('fresh.git');
+
+    const res = await controllerFor(A).syncNow(opts(freshUrl)); // must NOT throw
+    expect(res.action).toBe('seeded');
+    expect(res.pushed).toBe(true);
+
+    const C = dir('C');
+    const cloned = await controllerFor(C).syncNow(opts(freshUrl));
+    expect(cloned.action).toBe('cloned');
+    expect(fs.readFileSync(path.join(C, 'note.md'), 'utf8')).toContain('hello');
+  });
+
   it('commits + pushes a local edit; another vault pulls it', async () => {
     const A = dir('A');
     fs.writeFileSync(path.join(A, 'note.md'), 'v1\n');
