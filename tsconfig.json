@@ -21,5 +21,5 @@
     "inlineSources": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "coverage", "test-results", "playwright-report"]
+  "exclude": ["node_modules", "coverage"]
 }
