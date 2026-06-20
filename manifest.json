@@ -1,9 +1,9 @@
 {
 	"id": "agentage-memory",
-	"name": "Agentage Memory",
+	"name": "Agentage Memory Sync",
 	"version": "0.1.1",
 	"minAppVersion": "1.11.4",
-	"description": "Sync your notes to your private Agentage Memory so Claude, ChatGPT, Cursor and any MCP client read and write the same Markdown you own. Requires an Agentage account.",
+	"description": "Two-way Git sync between your vault and Agentage Memory, one Markdown memory every AI shares over MCP. Read and write it from Claude, ChatGPT, and Cursor. Files-first, owned by you.",
 	"author": "agentage",
 	"authorUrl": "https://agentage.io",
 	"isDesktopOnly": false

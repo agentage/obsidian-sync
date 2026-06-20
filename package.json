@@ -1,7 +1,7 @@
 {
   "name": "obsidian-memory",
   "version": "0.1.1",
-  "description": "Agentage Memory — Obsidian plugin. One memory, every AI, owned by you.",
+  "description": "Agentage Memory Sync — Obsidian plugin. Two-way Git sync + MCP. One memory, every AI, owned by you.",
   "private": true,
   "type": "module",
   "main": "main.js",
@@ -36,7 +36,8 @@
     "obsidian-plugin",
     "agentage",
     "mcp",
-    "sync"
+    "sync",
+    "git"
   ],
   "author": "agentage",
   "license": "SEE LICENSE IN LICENSE",
