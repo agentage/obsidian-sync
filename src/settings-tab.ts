@@ -1,14 +1,5 @@
 import { App, Notice, PluginSettingTab, Setting, debounce } from 'obsidian';
-import {
-  AGENTAGE_REMOTE,
-  DEFAULT_REMOTE_HOST,
-  MCP_ENDPOINT,
-  buildVaultsConfig,
-  normalizeVaultName,
-  parseIgnore,
-  validateSettings,
-  type AgentageMemorySettings,
-} from './settings';
+import { AGENTAGE_REMOTE, MCP_ENDPOINT, validateSettings, type AgentageMemorySettings } from './settings';
 import type { ApplyResult } from './vaults-config';
 
 // What the settings page needs from the plugin (avoids a circular import on main).
@@ -24,8 +15,6 @@ export interface SettingsHost {
 export class AgentageMemorySettingTab extends PluginSettingTab {
   private host: SettingsHost;
   private status?: HTMLElement;
-  private preview?: HTMLElement;
-  private errors?: HTMLElement;
   private writeDebounced: () => void;
 
   constructor(app: App, host: SettingsHost) {
@@ -34,10 +23,9 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
     this.writeDebounced = debounce(() => void this.write(), 700, true);
   }
 
-  /** On any change: persist plugin data + refresh now, write vaults.json debounced. */
+  /** On any change: persist plugin data now, write vaults.json debounced. */
   private touch(): void {
     void this.host.saveSettings();
-    this.refreshPreview();
     this.writeDebounced();
   }
 
@@ -52,7 +40,7 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     const s = this.host.settings;
-    this.preview = this.errors = this.status = undefined;
+    this.status = undefined;
     containerEl.empty();
     containerEl.addClass('ams-settings');
 
@@ -103,15 +91,13 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
 
     this.status = containerEl.createDiv({ cls: 'ams-status' });
 
-    // ---- Advanced (hidden complexity) ----
+    // ---- Advanced (just the essentials; everything else lives in the config file) ----
     new Setting(containerEl)
       .setName('Advanced settings')
-      .setDesc('For power users: custom remote, paths, MCP address, raw config.')
+      .setDesc('Default vault, MCP address, and where the config lives.')
       .addToggle((t) => t.setValue(s.showAdvanced).onChange((v) => { s.showAdvanced = v; void this.host.saveSettings(); this.display(); }));
 
     if (s.showAdvanced) this.renderAdvanced(containerEl, s);
-
-    this.refreshPreview();
   }
 
   /** Add/remove an MCP scope, then persist. */
@@ -122,53 +108,28 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
   }
 
   private renderAdvanced(c: HTMLElement, s: AgentageMemorySettings): void {
-    c.createEl('h3', { text: 'Vault' });
-    new Setting(c).setName('Vault name').setDesc('Key in vaults.json (a-z 0-9 - _).')
-      .addText((t) => t.setPlaceholder('personal').setValue(s.vaultName).onChange((v) => { s.vaultName = v; this.touch(); }));
-    new Setting(c).setName('Local path').setDesc('Working-copy folder. Blank = this vault’s folder.')
-      .addText((t) => t.setPlaceholder(this.host.vaultRootPath()).setValue(s.path).onChange((v) => { s.path = v; this.touch(); }));
-    new Setting(c).setName('Config directory').setDesc('Where vaults.json lives.')
-      .addText((t) => t.setValue(s.configDir).onChange((v) => { s.configDir = v.trim() || '~/.agentage'; this.touch(); }));
-    new Setting(c).setName('Set as default vault').setDesc('The vault every AI sees first.')
+    new Setting(c)
+      .setName('Set as default vault')
+      .setDesc('The vault every AI sees first.')
       .addToggle((t) => t.setValue(s.makeDefault).onChange((v) => { s.makeDefault = v; this.touch(); }));
 
-    if (s.syncEnabled) {
-      c.createEl('h3', { text: 'Sync' });
-      new Setting(c).setName('Remote').setDesc('“agentage” (managed) or any git URL.')
-        .addText((t) => { t.setPlaceholder(`agentage  ·  ${DEFAULT_REMOTE_HOST}/<user>/<vault>.git`).setValue(s.origin.remote).onChange((v) => { s.origin.remote = v; this.touch(); }); t.inputEl.addClass('ams-mono'); return t; });
-      new Setting(c).setName('Sync interval (minutes)').setDesc('Background cadence. 0 = manual only.')
-        .addText((t) => t.setValue(String(s.origin.interval)).onChange((v) => { const n = Number.parseInt(v, 10); s.origin.interval = Number.isFinite(n) && n >= 0 ? n : 0; this.touch(); }));
-      new Setting(c).setName('Ignore').setDesc('Comma/newline globs kept out of the repo.')
-        .addTextArea((t) => t.setPlaceholder('.obsidian, .trash').setValue(s.origin.ignore.join(', ')).onChange((v) => { s.origin.ignore = parseIgnore(v); this.touch(); }));
-    }
-
     if (s.mcp.length > 0) {
-      c.createEl('h3', { text: 'MCP' });
-      new Setting(c).setName('MCP address').setDesc('Endpoint AI clients connect to.')
+      new Setting(c)
+        .setName('MCP address')
+        .setDesc('The endpoint AI clients connect to.')
         .addText((t) => { t.setValue(MCP_ENDPOINT).setDisabled(true); t.inputEl.addClass('ams-mono'); return t; })
         .addButton((b) => b.setButtonText('Copy').onClick(async () => { await navigator.clipboard.writeText(MCP_ENDPOINT); new Notice('Copied'); }));
     }
 
-    c.createEl('h3', { text: 'Saved configuration' });
-    c.createEl('p', { cls: 'ams-sub', text: `Written to ${s.configDir}/vaults.json — the config memory-core loads.` });
-    this.errors = c.createDiv({ cls: 'ams-errors' });
-    this.preview = c.createEl('pre', { cls: 'ams-preview' });
+    new Setting(c)
+      .setName('Configuration file')
+      .setDesc(`${s.configDir}/vaults.json — edit it directly to fine-tune sync (interval, ignored files, a custom git remote). Your edits are kept.`)
+      .addButton((b) => b.setButtonText('Copy path').onClick(async () => { await navigator.clipboard.writeText(`${s.configDir}/vaults.json`); new Notice('Path copied'); }));
   }
 
   private setStatus(text: string, kind: 'ok' | 'err' | 'muted'): void {
     if (!this.status) return;
     this.status.empty();
     this.status.createDiv({ cls: `ams-status-line ams-${kind}`, text: kind === 'ok' ? `✓ ${text}` : text });
-  }
-
-  private refreshPreview(): void {
-    const s = this.host.settings;
-    if (this.preview) this.preview.setText(JSON.stringify(buildVaultsConfig(s, this.host.vaultRootPath()), null, 2));
-    if (this.errors) {
-      this.errors.empty();
-      for (const e of validateSettings(s)) this.errors.createDiv({ cls: 'ams-error', text: `⚠ ${e}` });
-      const norm = normalizeVaultName(s.vaultName);
-      if (norm && norm !== s.vaultName.trim()) this.errors.createDiv({ cls: 'ams-hint', text: `Saved as “${norm}”.` });
-    }
   }
 }

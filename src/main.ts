@@ -1,11 +1,11 @@
 import { FileSystemAdapter, Notice, Platform, Plugin } from 'obsidian';
-import { AgentageMemorySettings, DEFAULT_SETTINGS, buildVaultEntry, normalizeVaultName } from './settings';
+import { AgentageMemorySettings, DEFAULT_SETTINGS, normalizeVaultName } from './settings';
 import { AgentageMemorySettingTab, SettingsHost } from './settings-tab';
 import { applyVaultsConfig, type ApplyResult } from './vaults-config';
 
 const CONNECT_URL = 'https://agentage.io';
 
-// Configuration page for agentage Memory. Writes the memory-core config
+// Configuration page for Agentage Sync. Writes the memory-core config
 // (~/.agentage/vaults.json); the sync engine + MCP wiring land in later milestones.
 export default class AgentageMemoryPlugin extends Plugin implements SettingsHost {
   settings: AgentageMemorySettings = DEFAULT_SETTINGS;
@@ -23,21 +23,29 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     return adapter instanceof FileSystemAdapter ? adapter.getBasePath() : this.app.vault.getName();
   }
 
+  /** memory-core vault name: the user's override, else this Obsidian vault's name. */
+  private vaultName(): string {
+    return normalizeVaultName(this.settings.vaultName) || normalizeVaultName(this.app.vault.getName()) || 'personal';
+  }
+
   openSignIn(): void {
     window.open(CONNECT_URL, '_blank');
     new Notice('Opening agentage sign-in. Your token will be saved to ~/.agentage/auth.json (not vaults.json) when sign-in lands.');
   }
 
-  /** Upsert this vault into ~/.agentage/vaults.json, preserving CLI-managed vaults. */
+  /** Upsert this vault into ~/.agentage/vaults.json, preserving hand-edits + CLI vaults. */
   async applyConfig(): Promise<ApplyResult> {
     const s = this.settings;
-    const name = normalizeVaultName(s.vaultName) || 'personal';
+    const name = this.vaultName();
     const res = await applyVaultsConfig({
       configDirSetting: s.configDir,
       name,
       previousName: s.writtenVaultName || undefined,
-      entry: buildVaultEntry(s, this.vaultRootPath()),
       makeDefault: s.makeDefault,
+      path: s.path.trim() || this.vaultRootPath(),
+      syncEnabled: s.syncEnabled,
+      remote: s.origin.remote,
+      mcp: s.mcp,
     });
     if (res.ok) {
       s.writtenVaultName = name;

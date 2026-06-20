@@ -41,7 +41,7 @@ export const VAULTS_SCHEMA_URL = 'https://memory.agentage.io/schema/vaults.json'
 export const AGENTAGE_REMOTE = 'agentage';
 
 export const DEFAULT_SETTINGS: AgentageMemorySettings = {
-  vaultName: 'personal',
+  vaultName: '', // empty -> derived from the Obsidian vault name (see main.vaultName())
   path: '',
   makeDefault: true,
   syncEnabled: false,
