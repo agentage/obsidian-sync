@@ -68,9 +68,34 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   }
 
   private buildAuth(): void {
+    // Tokens live in Obsidian's encrypted secretStorage (the proven backing from
+    // the archived plugin), never data.json/vaults.json. Defensive: if a build's
+    // getSecret is async (returns a Promise), get() yields null instead of throwing.
+    const ss = (
+      this.app as unknown as {
+        secretStorage?: {
+          getSecret(id: string): unknown;
+          setSecret(id: string, value: string): unknown;
+        };
+      }
+    ).secretStorage;
     const secrets: SecretStore = {
-      get: (id) => this.app.loadLocalStorage(id) as string | null,
-      set: (id, v) => this.app.saveLocalStorage(id, v || undefined),
+      get: (id) => {
+        try {
+          const v = ss?.getSecret(id);
+          return typeof v === 'string' ? v : null;
+        } catch {
+          return null;
+        }
+      },
+      set: (id, value) => {
+        try {
+          const r = ss?.setSecret(id, value);
+          if (r instanceof Promise) void r.catch(() => undefined);
+        } catch {
+          /* secretStorage unavailable */
+        }
+      },
     };
     const authJson = this.isDesktop
       ? createAuthJsonWriter({ configDirSetting: this.settings.configDir, siteFqdn: SITE_FQDN })

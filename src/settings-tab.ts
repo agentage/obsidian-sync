@@ -1,10 +1,5 @@
 import { type App, Notice, PluginSettingTab, Setting, debounce } from 'obsidian';
-import {
-  AGENTAGE_REMOTE,
-  MCP_ENDPOINT,
-  validateSettings,
-  type AgentageMemorySettings,
-} from './settings';
+import { MCP_ENDPOINT, validateSettings, type AgentageMemorySettings } from './settings';
 import type { ApplyResult } from './vaults-config';
 
 // What the settings page needs from the plugin (avoids a circular import on main).
@@ -17,7 +12,6 @@ export interface SettingsHost {
   isSignedIn(): boolean;
   disconnect(): Promise<void>;
   applyConfig(): Promise<ApplyResult>;
-  syncNow(): Promise<{ ok: boolean; message: string }>;
 }
 
 export class AgentageMemorySettingTab extends PluginSettingTab {
@@ -144,55 +138,6 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
           await navigator.clipboard.writeText(`${s.configDir}/vaults.json`);
           new Notice('Path copied');
         })
-      );
-
-    this.renderTesting(containerEl, s);
-  }
-
-  // Temporary affordance to try sync against any git remote with a token, before the
-  // agentage remote resolver + OAuth sign-in land. Desktop only.
-  private renderTesting(c: HTMLElement, s: AgentageMemorySettings): void {
-    new Setting(c).setName('Sync').setHeading();
-    c.createEl('p', {
-      cls: 'ams-sub',
-      text: 'Connect above, then Sync now to back up this vault to your Agentage Memory and pull changes back. Desktop only for now.',
-    });
-
-    new Setting(c)
-      .setName('Custom git remote (optional)')
-      .setDesc('Leave blank to use your managed Agentage remote. Or set a git URL to override it.')
-      .addText((t) =>
-        t
-          .setPlaceholder('https://…/repo.git')
-          .setValue(s.origin.remote === AGENTAGE_REMOTE ? '' : s.origin.remote)
-          .onChange((v) => {
-            s.origin.remote = v.trim();
-            s.syncEnabled = !!v.trim();
-            this.touch();
-          })
-      );
-
-    const result = c.createDiv({ cls: 'ams-status' });
-    new Setting(c)
-      .setName('Sync now')
-      .setDesc('Clone or pull, merge, commit local changes, push.')
-      .addButton((b) =>
-        b
-          .setCta()
-          .setButtonText('Sync now')
-          .onClick(async () => {
-            b.setDisabled(true);
-            result.empty();
-            result.createDiv({ cls: 'ams-status-line ams-muted', text: 'Syncing…' });
-            const r = await this.host.syncNow();
-            result.empty();
-            result.createDiv({
-              cls: `ams-status-line ams-${r.ok ? 'ok' : 'err'}`,
-              text: r.ok ? `✓ ${r.message}` : r.message,
-            });
-            new Notice(`Agentage Sync: ${r.message}`);
-            b.setDisabled(false);
-          })
       );
   }
 
