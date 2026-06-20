@@ -287,6 +287,52 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     );
   }
 
+  // --- memory selection (SettingsHost) ---
+  /** Existing server memories for this account (readdir-derived, via the sync host). */
+  async listVaults(): Promise<string[]> {
+    const token = await this.auth.getValidToken();
+    if (!token) return [];
+    try {
+      return (await this.resolver.resolve(token)).vaults;
+    } catch {
+      return [];
+    }
+  }
+
+  /** Create a new server memory via the create API (git push never creates — R14). */
+  async createVault(name: string): Promise<{ ok: boolean; vault?: string; error?: string }> {
+    const token = await this.auth.getValidToken();
+    if (!token) return { ok: false, error: 'Sign in to Agentage first.' };
+    const vault = normalizeVaultName(name);
+    if (!vault) return { ok: false, error: 'Enter a valid name (a-z, 0-9, -, _).' };
+    const res = await this.resolver.resolve(token).catch(() => null);
+    if (!res) return { ok: false, error: "Couldn't reach the agentage sync host." };
+    if (res.vaults.includes(vault)) return { ok: true, vault }; // idempotent: already exists
+    try {
+      const r = await requestUrl({
+        url: `${res.gitEndpoint.replace(/\/+$/, '')}/vaults`,
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: vault }),
+        throw: false,
+      });
+      if (r.status === 200 || r.status === 201) {
+        this.resolver.invalidate(); // so the new memory shows up on the next list
+        return { ok: true, vault };
+      }
+      if (r.status === 404 || r.status === 405)
+        return { ok: false, error: 'Creating memories is not available on the server yet.' };
+      const body = safeJson(r.text) as { error?: string } | null;
+      return { ok: false, error: body?.error ?? `Create failed (HTTP ${r.status})` };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  }
+
+  defaultVaultName(): string {
+    return normalizeVaultName(this.app.vault.getName()) || 'personal';
+  }
+
   // --- auth (SettingsHost) ---
   openSignIn(): void {
     void this.auth.startSignIn();
@@ -330,10 +376,14 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     if (!remote || remote === 'agentage') {
       try {
         const res = await this.resolver.resolve(token);
-        const want = this.vaultNameOf();
-        // The server provisions a `default` vault and does not init named repos yet,
-        // so we sync the vault the server actually has (falls back to its first one).
-        syncedVault = res.vaults.includes(want) ? want : (res.vaults[0] ?? want);
+        const chosen = normalizeVaultName(this.settings.vault);
+        // Use the memory the user picked/created in settings; else the server's first one.
+        if (chosen) {
+          syncedVault = chosen;
+        } else {
+          const want = this.vaultNameOf();
+          syncedVault = res.vaults.includes(want) ? want : (res.vaults[0] ?? want);
+        }
         remote = buildRepoUrl(res.gitEndpoint, syncedVault);
       } catch (e) {
         return {
