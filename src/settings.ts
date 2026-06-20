@@ -27,11 +27,18 @@ export interface AgentageMemorySettings {
   mcp: McpScope[];
   /** Dir holding vaults.json (memory-core: AGENTAGE_CONFIG_DIR or ~/.agentage). */
   configDir: string;
+  /** UI only — reveal the advanced fields (not written to vaults.json). */
+  showAdvanced: boolean;
+  /** Plugin-local — the vault name last written to vaults.json, for renames. */
+  writtenVaultName: string;
 }
 
 export const MCP_ENDPOINT = 'https://memory.agentage.io/mcp';
 export const DEFAULT_REMOTE_HOST = 'https://sync.agentage.io';
 export const VAULTS_SCHEMA_URL = 'https://memory.agentage.io/schema/vaults.json';
+// The managed remote alias. memory-core resolves "agentage" to the cloud git URL
+// using the OAuth token in ~/.agentage/auth.json (never stored in vaults.json).
+export const AGENTAGE_REMOTE = 'agentage';
 
 export const DEFAULT_SETTINGS: AgentageMemorySettings = {
   vaultName: 'personal',
@@ -41,6 +48,8 @@ export const DEFAULT_SETTINGS: AgentageMemorySettings = {
   origin: { remote: '', interval: 5, ignore: ['.obsidian', '.trash'] },
   mcp: ['local'],
   configDir: '~/.agentage',
+  showAdvanced: false,
+  writtenVaultName: '',
 };
 
 /** Trim + drop trailing slashes from a URL-ish value. */
@@ -102,7 +111,8 @@ export const buildVaultsConfig = (s: AgentageMemorySettings, vaultRootPath: stri
 export const validateSettings = (s: AgentageMemorySettings): string[] => {
   const errs: string[] = [];
   if (!normalizeVaultName(s.vaultName)) errs.push('Vault name is required.');
-  if (s.syncEnabled && !normalizeRemote(s.origin.remote)) errs.push('Sync is on but no remote URL is set.');
+  if (s.syncEnabled && !normalizeRemote(s.origin.remote))
+    errs.push('Sync is on but no remote — click “Connect to agentage” or set a remote URL in Advanced.');
   // memory-core: a vault needs origin and/or path; path always defaults to the vault folder.
   return errs;
 };
