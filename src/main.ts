@@ -5,8 +5,9 @@ import { AgentageMemorySettingTab, type SettingsHost } from './settings-tab';
 import { applyVaultsConfig, type ApplyResult } from './vaults-config';
 import { createGitClient } from './git/git-client';
 import { requestUrlHttpClient } from './git/http-requesturl';
+import { VaultFs } from './git/vault-fs';
 import { mergeNote } from './git/merge-note';
-import { createSyncController, type SyncStatus } from './sync-controller';
+import { createSyncController, type SyncController, type SyncStatus } from './sync-controller';
 import { CALLBACK_ACTION, createAuthFlow, type AuthFlow } from './auth/auth-flow';
 import { createAuthStore, type SecretStore } from './auth/token-store';
 import { createAuthJsonWriter } from './auth/auth-json';
@@ -183,16 +184,27 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     return this.auth.disconnect();
   }
 
-  /** Desktop git sync using node fs (the path covered by the unit/integration tests). */
-  private async buildController() {
+  // Desktop: node fs against the absolute vault path (the unit/integration-tested path).
+  // Mobile: the VaultFs shim over vault.adapter — vault-relative dir ('' = vault root,
+  // .git inside the vault), same engine + adopt-guard. Mobile is best-effort and not
+  // yet device-verified; the desktop branch is unchanged.
+  private async buildController(): Promise<SyncController> {
     const adapter = this.app.vault.adapter;
-    if (!(adapter instanceof FileSystemAdapter)) return null;
-    const nodefs = (await import('node:fs')) as unknown as FsClient;
-    const client = createGitClient({ fs: nodefs, http: requestUrlHttpClient }, agentageMergeDriver);
+    if (adapter instanceof FileSystemAdapter) {
+      const nodefs = (await import('node:fs')) as unknown as FsClient;
+      return this.makeController(nodefs, adapter.getBasePath());
+    }
+    const vfs = new VaultFs(this.app.vault, '.git') as unknown as FsClient;
+    return this.makeController(vfs, '', '.git');
+  }
+
+  private makeController(fs: FsClient, dir: string, gitdir?: string): SyncController {
+    const client = createGitClient({ fs, http: requestUrlHttpClient }, agentageMergeDriver);
     return createSyncController({
       client,
-      fs: nodefs,
-      dir: adapter.getBasePath(),
+      fs,
+      dir,
+      gitdir,
       ignore: [this.app.vault.configDir],
       now: () => new Date().toISOString(),
       onStatus: (s, msg) => this.setStatusBar(s, msg),
@@ -200,7 +212,6 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   }
 
   async syncNow(): Promise<{ ok: boolean; message: string }> {
-    if (!this.isDesktop) return { ok: false, message: 'Sync is desktop-only for now.' };
     const token = await this.auth.getValidToken();
     if (!token) return { ok: false, message: 'Sign in to Agentage first (Connect).' };
     let remote = this.settings.origin.remote.trim();
@@ -219,7 +230,6 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       }
     }
     const ctrl = await this.buildController();
-    if (!ctrl) return { ok: false, message: 'No filesystem access (desktop only).' };
     try {
       const r = await ctrl.syncNow({ url: remote, token });
       if (r.action === 'blocked') return { ok: false, message: r.message ?? 'blocked' };

@@ -32,15 +32,18 @@ function toArrayBuffer(data: ArrayBuffer | ArrayBufferView): ArrayBuffer {
 
 export class VaultFs {
   promises: Record<string, unknown> = {};
+  private readonly gitDir: string;
   private index: ArrayBuffer | undefined;
   private indexctime: number | undefined;
   private indexmtime: number | undefined;
 
-  // gitDir is the worktree-relative .git path, e.g. '.agentage/repo/.git'
+  // gitDir is the worktree-relative .git path (e.g. '.git'). Normalized so the
+  // index detection matches iso-git's paths regardless of leading slashes.
   constructor(
     private readonly vault: Vault,
-    private readonly gitDir: string
+    gitDir: string
   ) {
+    this.gitDir = normalizePath(gitDir);
     this.promises = {
       readFile: this.readFile.bind(this),
       writeFile: this.writeFile.bind(this),
@@ -53,6 +56,12 @@ export class VaultFs {
       readlink: this.readlink.bind(this),
       symlink: this.symlink.bind(this),
     };
+  }
+
+  // iso-git with dir='' (vault root) can emit leading-slash paths; vault.adapter
+  // wants vault-relative ones. normalizePath strips the leading slash ('' -> '/').
+  private rel(path: string): string {
+    return normalizePath(path);
   }
 
   private isIndex(path: string): boolean {
@@ -77,9 +86,10 @@ export class VaultFs {
   }
 
   async readFile(
-    path: string,
+    rawPath: string,
     opts?: string | { encoding?: string }
   ): Promise<string | ArrayBuffer> {
+    const path = this.rel(rawPath);
     const utf8 = opts === 'utf8' || (typeof opts === 'object' && opts?.encoding === 'utf8');
     if (utf8) {
       const f = this.vault.getAbstractFileByPath(path);
@@ -92,7 +102,8 @@ export class VaultFs {
     return this.vault.adapter.readBinary(path);
   }
 
-  async writeFile(path: string, data: string | ArrayBufferView | ArrayBuffer): Promise<void> {
+  async writeFile(rawPath: string, data: string | ArrayBufferView | ArrayBuffer): Promise<void> {
+    const path = this.rel(rawPath);
     if (typeof data === 'string') {
       const f = this.vault.getAbstractFileByPath(path);
       if (f instanceof TFile) {
@@ -115,7 +126,8 @@ export class VaultFs {
     return this.vault.adapter.writeBinary(path, buf);
   }
 
-  async stat(path: string): Promise<FakeStat> {
+  async stat(rawPath: string): Promise<FakeStat> {
+    const path = this.rel(rawPath);
     if (this.isIndex(path)) {
       if (this.index !== undefined && this.indexctime != null && this.indexmtime != null) {
         return this.fakeStat('file', this.index.byteLength, this.indexctime, this.indexmtime);
@@ -139,8 +151,8 @@ export class VaultFs {
     return this.stat(path);
   }
 
-  async readdir(path: string): Promise<string[]> {
-    let p = path;
+  async readdir(rawPath: string): Promise<string[]> {
+    let p = this.rel(rawPath);
     if (p === '.') p = '/';
     const res = await this.vault.adapter.list(p);
     const all = [...res.files, ...res.folders];
@@ -148,13 +160,13 @@ export class VaultFs {
   }
 
   async mkdir(path: string): Promise<void> {
-    return this.vault.adapter.mkdir(path);
+    return this.vault.adapter.mkdir(this.rel(path));
   }
   async rmdir(path: string): Promise<void> {
-    return this.vault.adapter.rmdir(path, false);
+    return this.vault.adapter.rmdir(this.rel(path), false);
   }
   async unlink(path: string): Promise<void> {
-    return this.vault.adapter.remove(path);
+    return this.vault.adapter.remove(this.rel(path));
   }
   async readlink(path: string): Promise<never> {
     throw new Error(`readlink(${path}) not supported`);

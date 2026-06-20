@@ -4,7 +4,7 @@
 
 Two-way **Git** sync between your Obsidian vault and your private [Agentage Memory](https://agentage.io) — the shared memory layer for every AI — so Claude, ChatGPT, Cursor, and any MCP client read and write the *same* Markdown you own. Your notes are plain `.md` files in a git repo you can clone or export anytime.
 
-> **Status:** desktop git sync + Agentage sign-in (OAuth 2.1 / PKCE) work today. Mobile and automatic background sync are next.
+> **Status:** desktop git sync + Agentage sign-in (OAuth 2.1 / PKCE) work today. Mobile sync is wired but experimental (not yet device-verified). Automatic background sync is next.
 
 ## How it works
 

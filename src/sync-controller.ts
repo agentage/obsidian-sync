@@ -35,7 +35,10 @@ export interface SyncResult {
   message?: string;
 }
 
-const joinPath = (a: string, b: string): string => `${a.replace(/\/+$/, '')}/${b}`;
+// Empty `a` (mobile: dir = '' = vault root) must yield `b`, not `/b` — a leading
+// slash breaks vault.adapter paths (.git, the conflict note). Desktop dir is an
+// absolute path (truthy), so it is unaffected.
+const joinPath = (a: string, b: string): string => (a ? `${a.replace(/\/+$/, '')}/${b}` : b);
 
 export function createSyncController(deps: SyncControllerDeps) {
   const ref = deps.ref ?? 'main';
