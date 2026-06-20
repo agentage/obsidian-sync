@@ -152,15 +152,15 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
   // Temporary affordance to try sync against any git remote with a token, before the
   // agentage remote resolver + OAuth sign-in land. Desktop only.
   private renderTesting(c: HTMLElement, s: AgentageMemorySettings): void {
-    new Setting(c).setName('Sync (testing)').setHeading();
+    new Setting(c).setName('Sync').setHeading();
     c.createEl('p', {
       cls: 'ams-sub',
-      text: 'Temporary: Connect above to sign in, then point at any git remote you can push to (e.g. a GitHub repo) and Sync now. The managed agentage remote lands next. Desktop only.',
+      text: 'Connect above, then Sync now to back up this vault to your Agentage Memory and pull changes back. Desktop only for now.',
     });
 
     new Setting(c)
-      .setName('Git remote (testing)')
-      .setDesc('A git URL you can push to, e.g. https://github.com/you/repo.git')
+      .setName('Custom git remote (optional)')
+      .setDesc('Leave blank to use your managed Agentage remote. Or set a git URL to override it.')
       .addText((t) =>
         t
           .setPlaceholder('https://…/repo.git')

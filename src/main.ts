@@ -12,8 +12,10 @@ import { createAuthStore, type SecretStore } from './auth/token-store';
 import { createAuthJsonWriter } from './auth/auth-json';
 import type { HttpPost } from './auth/oauth';
 import type { GetJson } from './auth/discovery';
+import { HostResolver, buildRepoUrl } from './resolve-host';
 
 const AUTH_ORIGIN = 'https://auth.agentage.io';
+const SYNC_ORIGIN = 'https://sync.agentage.io';
 const SITE_FQDN = 'agentage.io';
 
 // 3-way merge driver: split-YAML field-LWW + diff3 body (see git/merge-note).
@@ -39,6 +41,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   private statusEl?: HTMLElement;
   private settingTab?: AgentageMemorySettingTab;
   private auth!: AuthFlow;
+  private resolver!: HostResolver;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -97,6 +100,19 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       now: () => Date.now(),
       onChange: () => this.settingTab?.display(),
     });
+    this.resolver = new HostResolver(
+      SYNC_ORIGIN,
+      async (url, token) => {
+        const res = await requestUrl({
+          url,
+          method: 'GET',
+          headers: { Authorization: `Bearer ${token}` },
+          throw: false,
+        });
+        return { status: res.status, json: safeJson(res.text) };
+      },
+      () => Date.now()
+    );
   }
 
   private setStatusBar(s: SyncStatus, msg?: string): void {
@@ -162,12 +178,20 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     if (!this.isDesktop) return { ok: false, message: 'Sync is desktop-only for now.' };
     const token = await this.auth.getValidToken();
     if (!token) return { ok: false, message: 'Sign in to Agentage first (Connect).' };
-    const remote = this.settings.origin.remote.trim();
+    let remote = this.settings.origin.remote.trim();
+    // Managed remote: resolve the per-user git endpoint from the live sync host.
     if (!remote || remote === 'agentage') {
-      return {
-        ok: false,
-        message: 'Set a git remote URL in settings (the agentage remote resolver lands later).',
-      };
+      try {
+        const res = await this.resolver.resolve(token);
+        const want = this.vaultNameOf();
+        const vault = res.vaults.includes(want) ? want : (res.vaults[0] ?? want);
+        remote = buildRepoUrl(res.gitEndpoint, vault);
+      } catch (e) {
+        return {
+          ok: false,
+          message: `Couldn't reach the agentage sync host: ${(e as Error).message}`,
+        };
+      }
     }
     const ctrl = await this.buildController();
     if (!ctrl) return { ok: false, message: 'No filesystem access (desktop only).' };
