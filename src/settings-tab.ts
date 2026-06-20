@@ -14,9 +14,9 @@ export interface SettingsHost {
   vaultRootPath(): string;
   isDesktop: boolean;
   openSignIn(): void;
+  isSignedIn(): boolean;
+  disconnect(): Promise<void>;
   applyConfig(): Promise<ApplyResult>;
-  setToken(token: string): Promise<void>;
-  tokenSet(): boolean;
   syncNow(): Promise<{ ok: boolean; message: string }>;
 }
 
@@ -58,9 +58,8 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
     });
 
     // ---- Connect (top, primary) ----
-    const connected = s.origin.remote.trim() === AGENTAGE_REMOTE;
     const connect = new Setting(containerEl);
-    if (connected) {
+    if (this.host.isSignedIn()) {
       connect
         .setName('Connected to Agentage')
         .setDesc('Your account is linked. The sign-in token is stored privately on this device.')
@@ -68,28 +67,20 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
           b
             .setWarning()
             .setButtonText('Disconnect')
-            .onClick(() => {
-              s.origin.remote = '';
-              s.syncEnabled = false;
-              this.touch();
+            .onClick(async () => {
+              await this.host.disconnect();
               this.display();
             })
         );
     } else {
       connect
         .setName('Connect')
-        .setDesc('Link your Agentage account to back up and share this memory.')
+        .setDesc('Sign in to Agentage to back up and share this memory.')
         .addButton((b) =>
           b
             .setCta()
             .setButtonText('Connect to agentage')
-            .onClick(() => {
-              s.origin.remote = AGENTAGE_REMOTE;
-              s.syncEnabled = true;
-              this.host.openSignIn();
-              this.touch();
-              this.display();
-            })
+            .onClick(() => this.host.openSignIn())
         );
     }
     connect.nameEl.addClass('ams-big');
@@ -105,12 +96,7 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
       .addToggle((t) =>
         t.setValue(s.syncEnabled).onChange((v) => {
           s.syncEnabled = v;
-          if (v && !s.origin.remote.trim()) {
-            s.origin.remote = AGENTAGE_REMOTE;
-            this.host.openSignIn();
-          }
           this.touch();
-          this.display();
         })
       );
 
@@ -169,7 +155,7 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
     new Setting(c).setName('Sync (testing)').setHeading();
     c.createEl('p', {
       cls: 'ams-sub',
-      text: 'Temporary: point at any git remote you can push to (e.g. a GitHub repo) with a token, then Sync now. The agentage remote + sign-in land next. Desktop only.',
+      text: 'Temporary: Connect above to sign in, then point at any git remote you can push to (e.g. a GitHub repo) and Sync now. The managed agentage remote lands next. Desktop only.',
     });
 
     new Setting(c)
@@ -178,26 +164,13 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
       .addText((t) =>
         t
           .setPlaceholder('https://…/repo.git')
-          .setValue(s.origin.remote === 'agentage' ? '' : s.origin.remote)
+          .setValue(s.origin.remote === AGENTAGE_REMOTE ? '' : s.origin.remote)
           .onChange((v) => {
             s.origin.remote = v.trim();
             s.syncEnabled = !!v.trim();
             this.touch();
           })
       );
-
-    new Setting(c)
-      .setName('Access token (testing)')
-      .setDesc(
-        this.host.tokenSet()
-          ? 'A token is saved on this device.'
-          : 'Paste a token/PAT (stored on this device, never in vaults.json).'
-      )
-      .addText((t) => {
-        t.inputEl.type = 'password';
-        t.setPlaceholder('paste token').onChange((v) => void this.host.setToken(v.trim()));
-        return t;
-      });
 
     const result = c.createDiv({ cls: 'ams-status' });
     new Setting(c)

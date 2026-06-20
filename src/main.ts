@@ -1,4 +1,4 @@
-import { FileSystemAdapter, Notice, Platform, Plugin, setIcon } from 'obsidian';
+import { FileSystemAdapter, Notice, Platform, Plugin, requestUrl, setIcon } from 'obsidian';
 import type { FsClient, MergeDriverCallback } from 'isomorphic-git';
 import { type AgentageMemorySettings, DEFAULT_SETTINGS, normalizeVaultName } from './settings';
 import { AgentageMemorySettingTab, type SettingsHost } from './settings-tab';
@@ -7,9 +7,14 @@ import { createGitClient } from './git/git-client';
 import { requestUrlHttpClient } from './git/http-requesturl';
 import { mergeNote } from './git/merge-note';
 import { createSyncController, type SyncStatus } from './sync-controller';
+import { CALLBACK_ACTION, createAuthFlow, type AuthFlow } from './auth/auth-flow';
+import { createAuthStore, type SecretStore } from './auth/token-store';
+import { createAuthJsonWriter } from './auth/auth-json';
+import type { HttpPost } from './auth/oauth';
+import type { GetJson } from './auth/discovery';
 
-const CONNECT_URL = 'https://agentage.io';
-const TOKEN_KEY = 'agentage-sync:token';
+const AUTH_ORIGIN = 'https://auth.agentage.io';
+const SITE_FQDN = 'agentage.io';
 
 // 3-way merge driver: split-YAML field-LWW + diff3 body (see git/merge-note).
 const agentageMergeDriver: MergeDriverCallback = ({ contents }) => {
@@ -18,17 +23,33 @@ const agentageMergeDriver: MergeDriverCallback = ({ contents }) => {
   return { cleanMerge: clean, mergedText: text };
 };
 
-// Agentage Sync plugin. Configuration page (writes ~/.agentage/vaults.json) + a
-// desktop git sync (isomorphic-git over requestUrl). Sign-in/token capture (OAuth)
-// and mobile (VaultFs) are later milestones; today a token is set in settings for testing.
+const safeJson = (text: string): unknown => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+
+// Agentage Sync plugin. Config page (writes ~/.agentage/vaults.json) + OAuth sign-in
+// (token in secretStorage/localStorage + ~/.agentage/auth.json) + desktop git sync.
 export default class AgentageMemoryPlugin extends Plugin implements SettingsHost {
   settings: AgentageMemorySettings = DEFAULT_SETTINGS;
   isDesktop = Platform.isDesktopApp;
   private statusEl?: HTMLElement;
+  private settingTab?: AgentageMemorySettingTab;
+  private auth!: AuthFlow;
 
   async onload(): Promise<void> {
     await this.loadSettings();
-    this.addSettingTab(new AgentageMemorySettingTab(this.app, this));
+    this.buildAuth();
+
+    this.settingTab = new AgentageMemorySettingTab(this.app, this);
+    this.addSettingTab(this.settingTab);
+    this.registerObsidianProtocolHandler(
+      CALLBACK_ACTION,
+      (params) => void this.auth.handleCallback(params)
+    );
 
     this.addRibbonIcon('refresh-cw', 'Agentage Sync', () => this.openSettings());
     const sb = this.addStatusBarItem();
@@ -39,9 +60,42 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     this.addCommand({
       id: 'sync-now',
       name: 'Sync now',
-      callback: () => {
-        void this.syncNow().then((r) => new Notice(`Agentage Sync: ${r.message}`));
-      },
+      callback: () => void this.syncNow().then((r) => new Notice(`Agentage Sync: ${r.message}`)),
+    });
+  }
+
+  private buildAuth(): void {
+    const secrets: SecretStore = {
+      get: (id) => this.app.loadLocalStorage(id) as string | null,
+      set: (id, v) => this.app.saveLocalStorage(id, v || undefined),
+    };
+    const authJson = this.isDesktop
+      ? createAuthJsonWriter({ configDirSetting: this.settings.configDir, siteFqdn: SITE_FQDN })
+      : null;
+    const store = createAuthStore(secrets, authJson);
+    const post: HttpPost = async (url, init) => {
+      const res = await requestUrl({
+        url,
+        method: 'POST',
+        headers: init.headers,
+        body: init.body,
+        throw: false,
+      });
+      return { status: res.status, json: safeJson(res.text) };
+    };
+    const getJson: GetJson = async (url) => {
+      const res = await requestUrl({ url, method: 'GET', throw: false });
+      return { status: res.status, json: safeJson(res.text) };
+    };
+    this.auth = createAuthFlow({
+      store,
+      post,
+      getJson,
+      authOrigin: () => AUTH_ORIGIN,
+      notify: (m) => new Notice(m),
+      openExternal: (url) => window.open(url, '_blank'),
+      now: () => Date.now(),
+      onChange: () => this.settingTab?.display(),
     });
   }
 
@@ -64,7 +118,6 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     app.setting?.openTabById?.(this.manifest.id);
   }
 
-  /** Absolute path of this vault's folder (desktop); falls back to the vault name. */
   vaultRootPath(): string {
     const adapter = this.app.vault.adapter;
     return adapter instanceof FileSystemAdapter ? adapter.getBasePath() : this.app.vault.getName();
@@ -78,35 +131,27 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     );
   }
 
+  // --- auth (SettingsHost) ---
   openSignIn(): void {
-    window.open(CONNECT_URL, '_blank');
-    new Notice(
-      'Opening agentage sign-in. Your token will be saved to ~/.agentage/auth.json (not vaults.json) when sign-in lands.'
-    );
+    void this.auth.startSignIn();
   }
-
-  // --- testing token store (localStorage; real secretStorage/OAuth lands in M1) ---
-  async setToken(token: string): Promise<void> {
-    this.app.saveLocalStorage(TOKEN_KEY, token || undefined);
+  isSignedIn(): boolean {
+    return this.auth.isSignedIn();
   }
-  tokenSet(): boolean {
-    return !!this.app.loadLocalStorage(TOKEN_KEY);
-  }
-  private getToken(): string | null {
-    return this.app.loadLocalStorage(TOKEN_KEY) as string | null;
+  disconnect(): Promise<void> {
+    return this.auth.disconnect();
   }
 
   /** Desktop git sync using node fs (the path covered by the unit/integration tests). */
   private async buildController() {
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof FileSystemAdapter)) return null;
-    const dir = adapter.getBasePath();
     const nodefs = (await import('node:fs')) as unknown as FsClient;
     const client = createGitClient({ fs: nodefs, http: requestUrlHttpClient }, agentageMergeDriver);
     return createSyncController({
       client,
       fs: nodefs,
-      dir,
+      dir: adapter.getBasePath(),
       ignore: [this.app.vault.configDir],
       now: () => new Date().toISOString(),
       onStatus: (s, msg) => this.setStatusBar(s, msg),
@@ -115,8 +160,8 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
 
   async syncNow(): Promise<{ ok: boolean; message: string }> {
     if (!this.isDesktop) return { ok: false, message: 'Sync is desktop-only for now.' };
-    const token = this.getToken();
-    if (!token) return { ok: false, message: 'Paste an access token in settings first.' };
+    const token = await this.auth.getValidToken();
+    if (!token) return { ok: false, message: 'Sign in to Agentage first (Connect).' };
     const remote = this.settings.origin.remote.trim();
     if (!remote || remote === 'agentage') {
       return {
