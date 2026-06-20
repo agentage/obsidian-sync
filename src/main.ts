@@ -54,6 +54,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   private resolver!: HostResolver;
   private syncState: SyncStatus = 'idle';
   private syncMsg?: string;
+  private lastVault?: string; // the server vault name we last synced (for the dashboard link)
   // In-memory mirror of the secret store: guarantees the sign-in round-trip works even
   // if the OS keyring (secretStorage) is unavailable; persisted via secretStorage +
   // ~/.agentage/auth.json. Hydrated from auth.json on desktop at load.
@@ -266,9 +267,11 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     app.setting?.openTabById?.(this.manifest.id);
   }
 
-  /** Open this vault's memories in the Agentage dashboard (browser). */
+  /** Open the dashboard at the vault we actually synced; before any sync, open the list
+   * (the server vault name can differ from the Obsidian name, so never guess a path). */
   private openDashboard(): void {
-    window.open(`${DASHBOARD_ORIGIN}/memories/${encodeURIComponent(this.vaultNameOf())}`, '_blank');
+    const base = `${DASHBOARD_ORIGIN}/memories`;
+    window.open(this.lastVault ? `${base}/${encodeURIComponent(this.lastVault)}` : base, '_blank');
   }
 
   vaultRootPath(): string {
@@ -295,16 +298,12 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     return this.auth.disconnect();
   }
 
-  // Desktop: node fs against the absolute vault path (the unit/integration-tested path).
-  // Mobile: the VaultFs shim over vault.adapter — vault-relative dir ('' = vault root,
-  // .git inside the vault), same engine + adopt-guard. Mobile is best-effort and not
-  // yet device-verified; the desktop branch is unchanged.
-  private async buildController(): Promise<SyncController> {
-    const adapter = this.app.vault.adapter;
-    if (adapter instanceof FileSystemAdapter) {
-      const nodefs = (await import('node:fs')) as unknown as FsClient;
-      return this.makeController(nodefs, adapter.getBasePath());
-    }
+  // Git fs runs over Obsidian's vault adapter on BOTH desktop and mobile (the proven
+  // obsidian-git pattern): the whole vault is the worktree, `.git` lives inside it,
+  // paths are vault-relative (dir=''). We do NOT use node:fs — a native
+  // `import('node:fs')` does not resolve in Obsidian's Electron renderer, which silently
+  // killed every sync right after host-resolve (resolve 200, then zero git requests).
+  private buildController(): SyncController {
     const vfs = new VaultFs(this.app.vault, '.git') as unknown as FsClient;
     return this.makeController(vfs, '', '.git');
   }
@@ -326,13 +325,16 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     const token = await this.auth.getValidToken();
     if (!token) return { ok: false, message: 'Sign in to Agentage first (Connect).' };
     let remote = this.settings.origin.remote.trim();
+    let syncedVault = this.vaultNameOf();
     // Managed remote: resolve the per-user git endpoint from the live sync host.
     if (!remote || remote === 'agentage') {
       try {
         const res = await this.resolver.resolve(token);
         const want = this.vaultNameOf();
-        const vault = res.vaults.includes(want) ? want : (res.vaults[0] ?? want);
-        remote = buildRepoUrl(res.gitEndpoint, vault);
+        // The server provisions a `default` vault and does not init named repos yet,
+        // so we sync the vault the server actually has (falls back to its first one).
+        syncedVault = res.vaults.includes(want) ? want : (res.vaults[0] ?? want);
+        remote = buildRepoUrl(res.gitEndpoint, syncedVault);
       } catch (e) {
         return {
           ok: false,
@@ -340,7 +342,8 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
         };
       }
     }
-    const ctrl = await this.buildController();
+    this.lastVault = syncedVault; // so "Open dashboard" points at the vault we actually synced
+    const ctrl = this.buildController();
     try {
       const r = await ctrl.syncNow({ url: remote, token });
       if (r.action === 'blocked') return { ok: false, message: r.message ?? 'blocked' };
@@ -352,7 +355,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       const bits = [r.action, r.committed ? 'committed' : '', r.pushed ? 'pushed' : ''].filter(
         Boolean
       );
-      return { ok: true, message: bits.join(' + ') };
+      return { ok: true, message: `${syncedVault}: ${bits.join(' + ')}` };
     } catch (e) {
       return { ok: false, message: (e as Error).message };
     }
