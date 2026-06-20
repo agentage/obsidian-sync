@@ -14,7 +14,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   async onload(): Promise<void> {
     await this.loadSettings();
     this.addSettingTab(new AgentageMemorySettingTab(this.app, this));
-    this.addStatusBarItem().setText('Memory: config');
+    this.addStatusBarItem().setText('Agentage Sync');
   }
 
   /** Absolute path of this vault's folder (desktop); falls back to the vault name. */

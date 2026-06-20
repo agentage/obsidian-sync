@@ -63,3 +63,28 @@
   color: var(--text-muted);
   font-size: var(--font-ui-small);
 }
+
+.ams-settings .ams-big {
+  font-weight: var(--font-semibold);
+}
+
+.ams-status {
+  min-height: 1.2em;
+  margin: 0.6em 0 0.2em;
+}
+
+.ams-status-line {
+  font-size: var(--font-ui-small);
+}
+
+.ams-ok {
+  color: var(--text-success, #6cc070);
+}
+
+.ams-err {
+  color: var(--text-error);
+}
+
+.ams-muted {
+  color: var(--text-muted);
+}
