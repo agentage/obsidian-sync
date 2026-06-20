@@ -1,4 +1,9 @@
-import { VAULTS_SCHEMA_URL, type McpScope, type VaultEntryPreview, type VaultsConfigPreview } from './settings';
+import {
+  VAULTS_SCHEMA_URL,
+  type McpScope,
+  type VaultEntryPreview,
+  type VaultsConfigPreview,
+} from './settings';
 
 // Reads/writes the real memory-core config at ~/.agentage/vaults.json (desktop only).
 // The plugin owns only the keys the UI controls (path, origin presence + remote, mcp,
@@ -27,12 +32,17 @@ export interface ApplyResult {
   error?: string;
 }
 
-const expandHome = (p: string, home: string): string => (p === '~' || p.startsWith('~/') ? home + p.slice(1) : p);
+const expandHome = (p: string, home: string): string =>
+  p === '~' || p.startsWith('~/') ? home + p.slice(1) : p;
 
 const envConfigDir = (): string | undefined =>
   typeof process !== 'undefined' ? process.env?.AGENTAGE_CONFIG_DIR : undefined;
 
-export const resolveConfigFile = (configDirSetting: string, home: string, join: (...p: string[]) => string): string =>
+export const resolveConfigFile = (
+  configDirSetting: string,
+  home: string,
+  join: (...p: string[]) => string
+): string =>
   join(expandHome(envConfigDir() || configDirSetting || '~/.agentage', home), 'vaults.json');
 
 /** Upsert this vault into ~/.agentage/vaults.json, preserving unmanaged keys + other vaults. */
@@ -73,7 +83,8 @@ export const applyVaultsConfig = async (args: ApplyArgs): Promise<ApplyResult> =
       delete next.origin;
     }
 
-    if (args.previousName && args.previousName !== args.name) delete config.vaults[args.previousName];
+    if (args.previousName && args.previousName !== args.name)
+      delete config.vaults[args.previousName];
     config.vaults[args.name] = next;
     if (args.makeDefault) config.default = args.name;
     else if (config.default === args.name) delete config.default;

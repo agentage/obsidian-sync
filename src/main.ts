@@ -1,6 +1,6 @@
 import { FileSystemAdapter, Notice, Platform, Plugin, setIcon } from 'obsidian';
-import { AgentageMemorySettings, DEFAULT_SETTINGS, normalizeVaultName } from './settings';
-import { AgentageMemorySettingTab, SettingsHost } from './settings-tab';
+import { type AgentageMemorySettings, DEFAULT_SETTINGS, normalizeVaultName } from './settings';
+import { AgentageMemorySettingTab, type SettingsHost } from './settings-tab';
 import { applyVaultsConfig, type ApplyResult } from './vaults-config';
 
 const CONNECT_URL = 'https://agentage.io';
@@ -26,7 +26,9 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   }
 
   private openSettings(): void {
-    const app = this.app as unknown as { setting?: { open?: () => void; openTabById?: (id: string) => void } };
+    const app = this.app as unknown as {
+      setting?: { open?: () => void; openTabById?: (id: string) => void };
+    };
     app.setting?.open?.();
     app.setting?.openTabById?.(this.manifest.id);
   }
@@ -39,12 +41,18 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
 
   /** memory-core vault name: the user's override, else this Obsidian vault's name. */
   private vaultName(): string {
-    return normalizeVaultName(this.settings.vaultName) || normalizeVaultName(this.app.vault.getName()) || 'personal';
+    return (
+      normalizeVaultName(this.settings.vaultName) ||
+      normalizeVaultName(this.app.vault.getName()) ||
+      'personal'
+    );
   }
 
   openSignIn(): void {
     window.open(CONNECT_URL, '_blank');
-    new Notice('Opening agentage sign-in. Your token will be saved to ~/.agentage/auth.json (not vaults.json) when sign-in lands.');
+    new Notice(
+      'Opening agentage sign-in. Your token will be saved to ~/.agentage/auth.json (not vaults.json) when sign-in lands.'
+    );
   }
 
   /** Upsert this vault into ~/.agentage/vaults.json, preserving hand-edits + CLI vaults. */

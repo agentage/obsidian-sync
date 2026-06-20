@@ -1,5 +1,10 @@
-import { App, Notice, PluginSettingTab, Setting, debounce } from 'obsidian';
-import { AGENTAGE_REMOTE, MCP_ENDPOINT, validateSettings, type AgentageMemorySettings } from './settings';
+import { type App, Notice, PluginSettingTab, Setting, debounce } from 'obsidian';
+import {
+  AGENTAGE_REMOTE,
+  MCP_ENDPOINT,
+  validateSettings,
+  type AgentageMemorySettings,
+} from './settings';
 import type { ApplyResult } from './vaults-config';
 
 // What the settings page needs from the plugin (avoids a circular import on main).
@@ -44,7 +49,6 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
     containerEl.empty();
     containerEl.addClass('ams-settings');
 
-    containerEl.createEl('h2', { text: 'Agentage Sync' });
     containerEl.createEl('p', {
       cls: 'ams-sub',
       text: 'One memory for all your AI — backed up, in sync, and readable by Claude, ChatGPT, Cursor, and more.',
@@ -57,23 +61,51 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
       connect
         .setName('Connected to Agentage')
         .setDesc('Your account is linked. The sign-in token is stored privately on this device.')
-        .addButton((b) => b.setWarning().setButtonText('Disconnect').onClick(() => { s.origin.remote = ''; s.syncEnabled = false; this.touch(); this.display(); }));
+        .addButton((b) =>
+          b
+            .setWarning()
+            .setButtonText('Disconnect')
+            .onClick(() => {
+              s.origin.remote = '';
+              s.syncEnabled = false;
+              this.touch();
+              this.display();
+            })
+        );
     } else {
       connect
         .setName('Connect')
         .setDesc('Link your Agentage account to back up and share this memory.')
-        .addButton((b) => b.setCta().setButtonText('Connect to agentage').onClick(() => { s.origin.remote = AGENTAGE_REMOTE; s.syncEnabled = true; this.host.openSignIn(); this.touch(); this.display(); }));
+        .addButton((b) =>
+          b
+            .setCta()
+            .setButtonText('Connect to agentage')
+            .onClick(() => {
+              s.origin.remote = AGENTAGE_REMOTE;
+              s.syncEnabled = true;
+              this.host.openSignIn();
+              this.touch();
+              this.display();
+            })
+        );
     }
     connect.nameEl.addClass('ams-big');
 
     // ---- The simple controls ----
     new Setting(containerEl)
       .setName('Setup sync')
-      .setDesc(s.syncEnabled ? 'On — your notes are backed up and synced across your devices.' : 'Back up this vault and keep all your devices in sync.')
+      .setDesc(
+        s.syncEnabled
+          ? 'On — your notes are backed up and synced across your devices.'
+          : 'Back up this vault and keep all your devices in sync.'
+      )
       .addToggle((t) =>
         t.setValue(s.syncEnabled).onChange((v) => {
           s.syncEnabled = v;
-          if (v && !s.origin.remote.trim()) { s.origin.remote = AGENTAGE_REMOTE; this.host.openSignIn(); }
+          if (v && !s.origin.remote.trim()) {
+            s.origin.remote = AGENTAGE_REMOTE;
+            this.host.openSignIn();
+          }
           this.touch();
           this.display();
         })
@@ -82,26 +114,48 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName('Expose local MCP')
       .setDesc('Let AI apps on this computer read and write your notes.')
-      .addToggle((t) => t.setValue(s.mcp.includes('local')).onChange((v) => this.setScope('local', v)));
+      .addToggle((t) =>
+        t.setValue(s.mcp.includes('local')).onChange((v) => this.setScope('local', v))
+      );
 
     new Setting(containerEl)
       .setName('Expose remote MCP')
       .setDesc('Let AI apps anywhere — Claude, ChatGPT, Cursor — read and write your notes.')
-      .addToggle((t) => t.setValue(s.mcp.includes('remote')).onChange((v) => this.setScope('remote', v)));
+      .addToggle((t) =>
+        t.setValue(s.mcp.includes('remote')).onChange((v) => this.setScope('remote', v))
+      );
 
     this.status = containerEl.createDiv({ cls: 'ams-status' });
 
     // ---- Always available: the address to share + the config file ----
     new Setting(containerEl)
       .setName('MCP address')
-      .setDesc('Share this with your AI apps. They can read and write once you turn on Expose MCP above.')
-      .addText((t) => { t.setValue(MCP_ENDPOINT).setDisabled(true); t.inputEl.addClass('ams-mono'); return t; })
-      .addButton((b) => b.setButtonText('Copy').onClick(async () => { await navigator.clipboard.writeText(MCP_ENDPOINT); new Notice('MCP address copied'); }));
+      .setDesc(
+        'Share this with your AI apps. They can read and write once you turn on Expose MCP above.'
+      )
+      .addText((t) => {
+        t.setValue(MCP_ENDPOINT).setDisabled(true);
+        t.inputEl.addClass('ams-mono');
+        return t;
+      })
+      .addButton((b) =>
+        b.setButtonText('Copy').onClick(async () => {
+          await navigator.clipboard.writeText(MCP_ENDPOINT);
+          new Notice('MCP address copied');
+        })
+      );
 
     new Setting(containerEl)
       .setName('Configuration file')
-      .setDesc(`${s.configDir}/vaults.json — edit it directly to fine-tune sync (interval, ignored files, a custom git remote). Your edits are kept.`)
-      .addButton((b) => b.setButtonText('Copy path').onClick(async () => { await navigator.clipboard.writeText(`${s.configDir}/vaults.json`); new Notice('Path copied'); }));
+      .setDesc(
+        `${s.configDir}/vaults.json — edit it directly to fine-tune sync (interval, ignored files, a custom git remote). Your edits are kept.`
+      )
+      .addButton((b) =>
+        b.setButtonText('Copy path').onClick(async () => {
+          await navigator.clipboard.writeText(`${s.configDir}/vaults.json`);
+          new Notice('Path copied');
+        })
+      );
   }
 
   /** Add/remove an MCP scope, then persist. */
@@ -114,6 +168,9 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
   private setStatus(text: string, kind: 'ok' | 'err' | 'muted'): void {
     if (!this.status) return;
     this.status.empty();
-    this.status.createDiv({ cls: `ams-status-line ams-${kind}`, text: kind === 'ok' ? `✓ ${text}` : text });
+    this.status.createDiv({
+      cls: `ams-status-line ams-${kind}`,
+      text: kind === 'ok' ? `✓ ${text}` : text,
+    });
   }
 }

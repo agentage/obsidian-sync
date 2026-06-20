@@ -45,7 +45,9 @@ export const DEFAULT_SETTINGS: AgentageMemorySettings = {
   path: '',
   makeDefault: true,
   syncEnabled: false,
-  origin: { remote: '', interval: 5, ignore: ['.obsidian', '.trash'] },
+  // ignore starts empty; the sync engine ignores the config folder dynamically via
+  // Vault#configDir (it is user-configurable, never hardcode '.obsidian').
+  origin: { remote: '', interval: 5, ignore: [] },
   mcp: ['local'],
   configDir: '~/.agentage',
   showAdvanced: false,
@@ -66,7 +68,14 @@ export const normalizeVaultName = (input: string): string =>
 
 /** Parse a comma/newline list into trimmed, de-duped globs. */
 export const parseIgnore = (input: string): string[] =>
-  Array.from(new Set(input.split(/[\n,]/).map((s) => s.trim()).filter(Boolean)));
+  Array.from(
+    new Set(
+      input
+        .split(/[\n,]/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    )
+  );
 
 // ---- vaults.json preview (the exact shape memory-core validates) ----
 
@@ -84,7 +93,10 @@ export interface VaultsConfigPreview {
 }
 
 /** Build the vaults.json entry these settings would write (for the live preview). */
-export const buildVaultEntry = (s: AgentageMemorySettings, vaultRootPath: string): VaultEntryPreview => {
+export const buildVaultEntry = (
+  s: AgentageMemorySettings,
+  vaultRootPath: string
+): VaultEntryPreview => {
   const entry: VaultEntryPreview = { path: s.path.trim() || vaultRootPath };
   const remote = normalizeRemote(s.origin.remote);
   if (s.syncEnabled && remote) {
@@ -97,7 +109,10 @@ export const buildVaultEntry = (s: AgentageMemorySettings, vaultRootPath: string
   return entry;
 };
 
-export const buildVaultsConfig = (s: AgentageMemorySettings, vaultRootPath: string): VaultsConfigPreview => {
+export const buildVaultsConfig = (
+  s: AgentageMemorySettings,
+  vaultRootPath: string
+): VaultsConfigPreview => {
   const name = normalizeVaultName(s.vaultName) || 'personal';
   return {
     $schema: VAULTS_SCHEMA_URL,
@@ -112,7 +127,9 @@ export const validateSettings = (s: AgentageMemorySettings): string[] => {
   const errs: string[] = [];
   if (!normalizeVaultName(s.vaultName)) errs.push('Vault name is required.');
   if (s.syncEnabled && !normalizeRemote(s.origin.remote))
-    errs.push('Sync is on but no remote — click “Connect to agentage” or set a remote URL in Advanced.');
+    errs.push(
+      'Sync is on but no remote — click “Connect to agentage” or set a remote URL in Advanced.'
+    );
   // memory-core: a vault needs origin and/or path; path always defaults to the vault folder.
   return errs;
 };
