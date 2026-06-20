@@ -89,29 +89,28 @@
   color: var(--text-muted);
 }
 
-/* Status bar = a single colored dot (no text/icon). Tone set by ams-sb--* class. */
+/* Status bar = a single colored dot (no text/icon). Tone set on .ams-sb-dot. */
 .ams-statusbar {
   display: inline-flex;
   align-items: center;
   cursor: pointer;
 }
 
-.ams-statusbar::before {
-  content: '';
+.ams-sb-dot {
   display: inline-block;
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--text-muted);
-  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px var(--background-modifier-border);
 }
 
-.ams-sb--green::before {
+.ams-sb-dot.is-green {
   background: var(--color-green, #4caf50);
 }
-.ams-sb--red::before {
+.ams-sb-dot.is-red {
   background: var(--color-red, #e05252);
 }
-.ams-sb--gray::before {
+.ams-sb-dot.is-gray {
   background: var(--text-muted);
 }

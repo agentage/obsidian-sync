@@ -48,6 +48,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   settings: AgentageMemorySettings = DEFAULT_SETTINGS;
   isDesktop = Platform.isDesktopApp;
   private statusBar?: HTMLElement;
+  private statusDot?: HTMLElement;
   private settingTab?: AgentageMemorySettingTab;
   private auth!: AuthFlow;
   private resolver!: HostResolver;
@@ -74,6 +75,8 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     const sb = this.addStatusBarItem();
     this.statusBar = sb;
     sb.addClass('ams-statusbar', 'mod-clickable');
+    // A REAL child element — an empty status-bar item (only a ::before) is hidden by Obsidian.
+    this.statusDot = sb.createSpan({ cls: 'ams-sb-dot' });
     this.registerDomEvent(sb, 'click', (evt) => this.showStatusMenu(evt));
     this.refreshStatus();
 
@@ -199,12 +202,12 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
 
   /** Status bar: colored dot only (green ready / red error / gray signed-out) + tooltip. */
   private refreshStatus(): void {
-    if (!this.statusBar) return;
+    if (!this.statusBar || !this.statusDot) return;
     const signedIn = !!this.auth && this.auth.isSignedIn();
     const erroring = this.syncState === 'error' || this.syncState === 'conflict';
     const tone = !signedIn ? 'gray' : erroring ? 'red' : 'green';
-    this.statusBar.removeClass('ams-sb--green', 'ams-sb--red', 'ams-sb--gray');
-    this.statusBar.addClass(`ams-sb--${tone}`);
+    this.statusDot.removeClass('is-green', 'is-red', 'is-gray');
+    this.statusDot.addClass(`is-${tone}`);
     const tip = !signedIn
       ? 'Agentage Sync — not signed in. Click to sign in.'
       : erroring
