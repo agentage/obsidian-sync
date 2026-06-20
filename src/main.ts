@@ -1,4 +1,4 @@
-import { FileSystemAdapter, Notice, Platform, Plugin, requestUrl, setIcon } from 'obsidian';
+import { FileSystemAdapter, Menu, Notice, Platform, Plugin, requestUrl, setIcon } from 'obsidian';
 import type { FsClient, MergeDriverCallback } from 'isomorphic-git';
 import { type AgentageMemorySettings, DEFAULT_SETTINGS, normalizeVaultName } from './settings';
 import { AgentageMemorySettingTab, type SettingsHost } from './settings-tab';
@@ -9,8 +9,15 @@ import { VaultFs } from './git/vault-fs';
 import { mergeNote } from './git/merge-note';
 import { createSyncController, type SyncController, type SyncStatus } from './sync-controller';
 import { CALLBACK_ACTION, createAuthFlow, type AuthFlow } from './auth/auth-flow';
-import { createAuthStore, type SecretStore } from './auth/token-store';
-import { createAuthJsonWriter } from './auth/auth-json';
+import {
+  createAuthStore,
+  type SecretStore,
+  ACCESS_TOKEN_SECRET,
+  REFRESH_TOKEN_SECRET,
+  EXPIRES_AT_SECRET,
+  CLIENT_ID_SECRET,
+} from './auth/token-store';
+import { createAuthJsonWriter, readAuthJsonState } from './auth/auth-json';
 import type { HttpPost } from './auth/oauth';
 import type { GetJson } from './auth/discovery';
 import { HostResolver, buildRepoUrl } from './resolve-host';
@@ -39,27 +46,38 @@ const safeJson = (text: string): unknown => {
 export default class AgentageMemoryPlugin extends Plugin implements SettingsHost {
   settings: AgentageMemorySettings = DEFAULT_SETTINGS;
   isDesktop = Platform.isDesktopApp;
+  private statusBar?: HTMLElement;
   private statusEl?: HTMLElement;
   private settingTab?: AgentageMemorySettingTab;
   private auth!: AuthFlow;
   private resolver!: HostResolver;
+  private syncState: SyncStatus = 'idle';
+  private syncMsg?: string;
+  // In-memory mirror of the secret store: guarantees the sign-in round-trip works even
+  // if the OS keyring (secretStorage) is unavailable; persisted via secretStorage +
+  // ~/.agentage/auth.json. Hydrated from auth.json on desktop at load.
+  private readonly secretCache = new Map<string, string>();
 
   async onload(): Promise<void> {
     await this.loadSettings();
     this.buildAuth();
+    await this.hydrateAuth();
 
     this.settingTab = new AgentageMemorySettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
-    this.registerObsidianProtocolHandler(
-      CALLBACK_ACTION,
-      (params) => void this.auth.handleCallback(params)
-    );
+    this.registerObsidianProtocolHandler(CALLBACK_ACTION, (params) => {
+      console.debug('[Agentage Sync] OAuth callback received', { hasCode: !!params.code });
+      void this.auth.handleCallback(params).then(() => this.onAuthChanged());
+    });
 
     this.addRibbonIcon('refresh-cw', 'Agentage Sync', () => this.openSettings());
     const sb = this.addStatusBarItem();
-    sb.addClass('ams-statusbar');
+    this.statusBar = sb;
+    sb.addClass('ams-statusbar', 'mod-clickable');
     setIcon(sb.createSpan({ cls: 'ams-sb-icon' }), 'refresh-cw');
-    this.statusEl = sb.createSpan({ text: 'Agentage Sync' });
+    this.statusEl = sb.createSpan({ cls: 'ams-sb-text' });
+    this.registerDomEvent(sb, 'click', (evt) => this.showStatusMenu(evt));
+    this.refreshStatus();
 
     this.addCommand({
       id: 'sync-now',
@@ -69,32 +87,44 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   }
 
   private buildAuth(): void {
-    // Tokens live in Obsidian's encrypted secretStorage (the proven backing from
-    // the archived plugin), never data.json/vaults.json. Defensive: if a build's
-    // getSecret is async (returns a Promise), get() yields null instead of throwing.
+    // Token store: an in-memory cache (always works in-session) mirrored to Obsidian's
+    // encrypted secretStorage, never data.json/vaults.json. secretStorage can THROW when
+    // the OS keyring is unavailable (common on headless/keyring-less Linux) — we log and
+    // keep the token in the cache + ~/.agentage/auth.json so sign-in still works.
     const ss = (
       this.app as unknown as {
         secretStorage?: {
-          getSecret(id: string): unknown;
-          setSecret(id: string, value: string): unknown;
+          getSecret(id: string): string | null;
+          setSecret(id: string, value: string): void;
         };
       }
     ).secretStorage;
+    if (!ss)
+      console.warn('[Agentage Sync] app.secretStorage unavailable; using in-memory + auth.json');
     const secrets: SecretStore = {
       get: (id) => {
+        const cached = this.secretCache.get(id);
+        if (cached !== undefined) return cached === '' ? null : cached;
         try {
           const v = ss?.getSecret(id);
-          return typeof v === 'string' ? v : null;
-        } catch {
-          return null;
+          if (typeof v === 'string') {
+            this.secretCache.set(id, v);
+            return v === '' ? null : v;
+          }
+        } catch (e) {
+          console.error('[Agentage Sync] secretStorage.getSecret failed:', e);
         }
+        return null;
       },
       set: (id, value) => {
+        this.secretCache.set(id, value);
         try {
-          const r = ss?.setSecret(id, value);
-          if (r instanceof Promise) void r.catch(() => undefined);
-        } catch {
-          /* secretStorage unavailable */
+          ss?.setSecret(id, value);
+        } catch (e) {
+          console.error(
+            '[Agentage Sync] secretStorage.setSecret failed (kept in memory + auth.json):',
+            e
+          );
         }
       },
     };
@@ -122,9 +152,12 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       getJson,
       authOrigin: () => AUTH_ORIGIN,
       notify: (m) => new Notice(m),
-      openExternal: (url) => window.open(url, '_blank'),
+      openExternal: (url) => {
+        console.debug('[Agentage Sync] opening authorize URL in browser');
+        window.open(url, '_blank');
+      },
       now: () => Date.now(),
-      onChange: () => this.settingTab?.display(),
+      onChange: () => this.onAuthChanged(),
     });
     this.resolver = new HostResolver(
       SYNC_ORIGIN,
@@ -142,14 +175,96 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   }
 
   private setStatusBar(s: SyncStatus, msg?: string): void {
-    if (!this.statusEl) return;
-    const label: Record<SyncStatus, string> = {
-      idle: 'Agentage Sync',
-      syncing: 'Agentage Sync: syncing…',
-      error: 'Agentage Sync: error',
-      conflict: 'Agentage Sync: conflict',
-    };
-    this.statusEl.setText(msg ? `${label[s]} (${msg})` : label[s]);
+    this.syncState = s;
+    this.syncMsg = msg;
+    this.refreshStatus();
+  }
+
+  /** Seed the token cache from ~/.agentage/auth.json (desktop) so sign-in survives a
+   * reload even without a keyring, and is shared with the CLI. No-op on mobile. */
+  private async hydrateAuth(): Promise<void> {
+    if (!this.isDesktop) return;
+    const state = await readAuthJsonState(this.settings.configDir);
+    if (!state?.tokens?.accessToken || !state.tokens.refreshToken) return;
+    if (state.clientId) this.secretCache.set(CLIENT_ID_SECRET, state.clientId);
+    this.secretCache.set(ACCESS_TOKEN_SECRET, state.tokens.accessToken);
+    this.secretCache.set(REFRESH_TOKEN_SECRET, state.tokens.refreshToken);
+    if (state.tokens.expiresAt != null)
+      this.secretCache.set(EXPIRES_AT_SECRET, String(state.tokens.expiresAt));
+    console.debug('[Agentage Sync] auth hydrated from auth.json');
+  }
+
+  private onAuthChanged(): void {
+    this.settingTab?.display();
+    this.refreshStatus();
+  }
+
+  /** Status bar: colored dot (green ready / red error / gray signed-out) + tooltip. */
+  private refreshStatus(): void {
+    if (!this.statusBar || !this.statusEl) return;
+    const signedIn = !!this.auth && this.auth.isSignedIn();
+    const erroring = this.syncState === 'error' || this.syncState === 'conflict';
+    const tone = !signedIn ? 'gray' : erroring ? 'red' : 'green';
+    const text = !signedIn
+      ? 'Agentage: sign in'
+      : this.syncState === 'syncing'
+        ? 'Agentage: syncing…'
+        : this.syncState === 'error'
+          ? 'Agentage: error'
+          : this.syncState === 'conflict'
+            ? 'Agentage: conflict'
+            : 'Agentage: synced';
+    this.statusEl.setText(text);
+    this.statusBar.removeClass('ams-sb--green', 'ams-sb--red', 'ams-sb--gray');
+    this.statusBar.addClass(`ams-sb--${tone}`);
+    const tip = !signedIn
+      ? 'Agentage Sync — not signed in. Click to sign in.'
+      : erroring
+        ? `Agentage Sync — ${this.syncState}${this.syncMsg ? `: ${this.syncMsg}` : ''}. Click for options.`
+        : this.syncState === 'syncing'
+          ? 'Agentage Sync — syncing… Click for options.'
+          : 'Agentage Sync — signed in and ready. Click for options.';
+    this.statusBar.setAttribute('aria-label', tip);
+    this.statusBar.setAttribute('title', tip);
+  }
+
+  /** Click the status bar → context menu (sign in, or sync / settings / disconnect). */
+  private showStatusMenu(evt: MouseEvent): void {
+    const menu = new Menu();
+    if (this.isSignedIn()) {
+      menu.addItem((i) =>
+        i
+          .setTitle('Sync now')
+          .setIcon('refresh-cw')
+          .onClick(() => void this.syncNow().then((r) => new Notice(`Agentage Sync: ${r.message}`)))
+      );
+      menu.addItem((i) =>
+        i
+          .setTitle('Open settings')
+          .setIcon('settings')
+          .onClick(() => this.openSettings())
+      );
+      menu.addItem((i) =>
+        i
+          .setTitle('Disconnect')
+          .setIcon('log-out')
+          .onClick(() => void this.disconnect())
+      );
+    } else {
+      menu.addItem((i) =>
+        i
+          .setTitle('Sign in to Agentage')
+          .setIcon('log-in')
+          .onClick(() => this.openSignIn())
+      );
+      menu.addItem((i) =>
+        i
+          .setTitle('Open settings')
+          .setIcon('settings')
+          .onClick(() => this.openSettings())
+      );
+    }
+    menu.showAtMouseEvent(evt);
   }
 
   private openSettings(): void {

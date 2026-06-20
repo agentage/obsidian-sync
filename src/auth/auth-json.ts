@@ -14,6 +14,23 @@ export interface AuthJsonState {
 const expandHome = (p: string, home: string): string =>
   p === '~' || p.startsWith('~/') ? home + p.slice(1) : p;
 
+/** Read ~/.agentage/auth.json (the reliable desktop store, shared with the CLI). Null if
+ * absent/unparseable/tokenless. Node-only; lazy imports keep it import-safe on mobile. */
+export async function readAuthJsonState(configDirSetting: string): Promise<AuthJsonState | null> {
+  try {
+    const fs = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const envDir = typeof process !== 'undefined' ? process.env?.AGENTAGE_CONFIG_DIR : undefined;
+    const dir = expandHome(envDir || configDirSetting || '~/.agentage', os.homedir());
+    const raw = await fs.readFile(path.join(dir, 'auth.json'), 'utf8');
+    const state = JSON.parse(raw) as AuthJsonState;
+    return state?.tokens?.accessToken ? state : null;
+  } catch {
+    return null;
+  }
+}
+
 async function writeAtomic(configDirSetting: string, name: string, json: string): Promise<string> {
   const fs = await import('node:fs/promises');
   const os = await import('node:os');

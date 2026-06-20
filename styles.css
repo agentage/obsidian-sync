@@ -93,6 +93,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  cursor: pointer;
 }
 
 .ams-sb-icon {
@@ -103,4 +104,39 @@
 .ams-sb-icon svg {
   width: 14px;
   height: 14px;
+}
+
+/* State tone: a colored status dot before the label + matching icon tint. */
+.ams-statusbar::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.ams-sb--green::before {
+  background: var(--color-green, #4caf50);
+}
+.ams-sb--red::before {
+  background: var(--color-red, #e05252);
+}
+.ams-sb--gray::before {
+  background: var(--text-muted);
+}
+
+.ams-sb--green .ams-sb-icon {
+  color: var(--color-green, #4caf50);
+}
+.ams-sb--red .ams-sb-icon {
+  color: var(--color-red, #e05252);
+}
+.ams-sb--gray .ams-sb-icon {
+  color: var(--text-muted);
+}
+
+.ams-sb-text {
+  font-size: var(--font-ui-smaller);
 }
