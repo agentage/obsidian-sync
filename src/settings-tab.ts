@@ -1,136 +1,203 @@
-import { Notice, PluginSettingTab, Setting, requestUrl, type App, type Plugin } from 'obsidian';
-import { isUnconfiguredDefault, pingServer } from './connection';
-import { DEFAULT_SETTINGS } from './settings';
-import type { SyncController } from './sync-controller';
-import type { AuthFlow } from './auth-flow';
+import { App, Notice, PluginSettingTab, Setting } from 'obsidian';
+import {
+  AgentageMemorySettings,
+  DEFAULT_REMOTE_HOST,
+  MCP_ENDPOINT,
+  McpScope,
+  buildVaultsConfig,
+  normalizeVaultName,
+  parseIgnore,
+  validateSettings,
+} from './settings';
+
+// What the settings page needs from the plugin (avoids a circular import on main).
+export interface SettingsHost {
+  settings: AgentageMemorySettings;
+  saveSettings(): Promise<void>;
+  vaultRootPath(): string;
+}
 
 export class AgentageMemorySettingTab extends PluginSettingTab {
-  constructor(
-    app: App,
-    plugin: Plugin,
-    private readonly core: SyncController,
-    private readonly auth: AuthFlow
-  ) {
-    super(app, plugin);
+  private host: SettingsHost;
+  private preview!: HTMLElement;
+  private errors!: HTMLElement;
+
+  constructor(app: App, host: SettingsHost) {
+    super(app, host as unknown as never);
+    this.host = host;
+  }
+
+  private save(): void {
+    void this.host.saveSettings();
+    this.refreshPreview();
   }
 
   display(): void {
     const { containerEl } = this;
+    const s = this.host.settings;
     containerEl.empty();
+    containerEl.addClass('ams-settings');
 
-    this.renderAccount(containerEl);
-    this.renderLocalDev(containerEl);
-  }
+    containerEl.createEl('h2', { text: 'Agentage Memory Sync' });
+    containerEl.createEl('p', {
+      cls: 'ams-sub',
+      text: 'One memory. Every AI. Owned by you. Configure how this vault maps to your agentage Memory.',
+    });
+    const callout = containerEl.createDiv({ cls: 'ams-callout' });
+    callout.createSpan({ cls: 'ams-callout-tag', text: 'Configuration only' });
+    callout.createSpan({
+      text: ' — the sync engine is being built. These settings define your memory-core vaults.json.',
+    });
 
-  private renderAccount(containerEl: HTMLElement): void {
-    new Setting(containerEl).setName('Account').setHeading();
-
-    new Setting(containerEl)
-      .setName('Agentage Memory')
-      .setDesc(
-        this.auth.isSignedIn()
-          ? 'Connected — this vault syncs to your Agentage Memory.'
-          : 'Start syncing this vault to your Agentage Memory.'
-      )
-      .addButton((btn) => {
-        if (this.auth.isSignedIn()) {
-          btn.setButtonText('Sign out').onClick(() => this.auth.signOut());
-        } else {
-          btn
-            .setButtonText('Start sync')
-            .setCta()
-            .onClick(() => this.auth.startSignIn());
-        }
-      });
+    // ---- 1 · Pick repo (vault) ----
+    containerEl.createEl('h3', { text: '1 · Pick repo (vault)' });
 
     new Setting(containerEl)
-      .setName('Auth endpoint')
-      .setDesc('GoTrue base URL. Leave the default unless told otherwise.')
-      .addText((text) =>
-        text
-          .setPlaceholder('https://memory.agentage.io/auth/v1')
-          .setValue(this.core.getSettings().authBase)
-          .onChange((value) => this.core.setAuthBase(value))
+      .setName('Vault name')
+      .setDesc('The name of this memory in vaults.json (lowercase, a-z 0-9 - _).')
+      .addText((t) =>
+        t
+          .setPlaceholder('personal')
+          .setValue(s.vaultName)
+          .onChange((v) => {
+            s.vaultName = v;
+            this.save();
+          })
       );
 
     new Setting(containerEl)
-      .setName('Auth key')
-      .setDesc('Public Agentage auth key (provided with your account). Required to sign in.')
-      .addText((text) =>
-        text
-          .setValue(this.core.getSettings().anonKey)
-          .onChange((value) => this.core.setAnonKey(value))
-      );
-  }
-
-  private renderLocalDev(containerEl: HTMLElement): void {
-    new Setting(containerEl).setName('Local dev').setHeading();
-
-    new Setting(containerEl)
-      .setName('Server URL')
-      .setDesc('Your Agentage Memory cloud endpoint. Leave the default unless told otherwise.')
-      .addText((text) =>
-        text
-          .setPlaceholder('https://memory.agentage.io')
-          .setValue(this.core.getSettings().serverUrl)
-          .onChange((value) => this.core.setServerUrl(value))
+      .setName('Local path')
+      .setDesc('Folder kept as the git working copy. Leave blank to use this vault’s folder.')
+      .addText((t) =>
+        t
+          .setPlaceholder(this.host.vaultRootPath())
+          .setValue(s.path)
+          .onChange((v) => {
+            s.path = v;
+            this.save();
+          })
       );
 
     new Setting(containerEl)
-      .setName('Username')
-      .setDesc('CouchDB username — local dev only. Stored in encrypted secret storage.')
-      .addText((text) =>
-        text
-          .setPlaceholder('admin')
-          .setValue(this.core.getBasicCreds().username)
-          .onChange((value) => this.core.setUsername(value))
-      );
-
-    new Setting(containerEl)
-      .setName('Database name')
-      .setDesc('CouchDB database. Override only for tests or per-vault setups.')
-      .addText((text) =>
-        text
-          .setPlaceholder('agentage-memory')
-          .setValue(this.core.getSettings().dbName)
-          .onChange((value) => this.core.setDbName(value))
-      );
-
-    new Setting(containerEl)
-      .setName('Password')
-      .setDesc('CouchDB password — local dev only. Stored in encrypted secret storage.')
-      .addText((text) => {
-        text
-          .setPlaceholder('agentage')
-          .setValue(this.core.getBasicCreds().password)
-          .onChange((value) => this.core.setPassword(value));
-        text.inputEl.type = 'password';
-      });
-
-    new Setting(containerEl)
-      .setName('Test connection')
-      .setDesc('Ping the server URL to confirm it is reachable.')
-      .addButton((btn) =>
-        btn.setButtonText('Test').onClick(async () => {
-          const url = this.core.getSettings().serverUrl;
-          // The default cloud host isn't a CouchDB; guide the user to sign in
-          // rather than pinging it and reporting a meaningless HTTP failure.
-          if (isUnconfiguredDefault(url, DEFAULT_SETTINGS.serverUrl)) {
-            new Notice('Not configured — sign in to start sync');
-            return;
-          }
-          btn.setDisabled(true).setButtonText('Testing…');
-          const r = await pingServer(url, async (u) => {
-            const res = await requestUrl({ url: u, method: 'GET', throw: false });
-            return { status: res.status };
-          });
-          btn.setDisabled(false).setButtonText('Test');
-          new Notice(
-            r.ok
-              ? `Connected (HTTP ${r.status})`
-              : `Failed: ${r.error ?? `HTTP ${r.status ?? '?'}`}`
-          );
+      .setName('Set as default vault')
+      .setDesc('Make this the `default` vault every AI sees first.')
+      .addToggle((t) =>
+        t.setValue(s.makeDefault).onChange((v) => {
+          s.makeDefault = v;
+          this.save();
         })
       );
+
+    // ---- 2 · Setup sync (origin) ----
+    containerEl.createEl('h3', { text: '2 · Setup sync' });
+
+    new Setting(containerEl)
+      .setName('Enable sync')
+      .setDesc('Two-way git sync to the remote. Sign-in + the sync engine arrive with the rebuild.')
+      .addToggle((t) =>
+        t.setValue(s.syncEnabled).onChange((v) => {
+          s.syncEnabled = v;
+          this.save();
+          this.display();
+        })
+      );
+
+    if (s.syncEnabled) {
+      new Setting(containerEl)
+        .setName('Remote URL')
+        .setDesc('Your per-vault git remote.')
+        .addText((t) =>
+          t
+            .setPlaceholder(`${DEFAULT_REMOTE_HOST}/<user>/<vault>.git`)
+            .setValue(s.origin.remote)
+            .onChange((v) => {
+              s.origin.remote = v;
+              this.save();
+            })
+        );
+
+      new Setting(containerEl)
+        .setName('Sync interval (minutes)')
+        .setDesc('How often to pull/push in the background. 0 = manual only.')
+        .addText((t) =>
+          t.setValue(String(s.origin.interval)).onChange((v) => {
+            const n = Number.parseInt(v, 10);
+            s.origin.interval = Number.isFinite(n) && n >= 0 ? n : 0;
+            this.save();
+          })
+        );
+
+      new Setting(containerEl)
+        .setName('Ignore')
+        .setDesc('Comma- or newline-separated globs kept out of the synced repo.')
+        .addTextArea((t) =>
+          t
+            .setPlaceholder('.obsidian, .trash')
+            .setValue(s.origin.ignore.join(', '))
+            .onChange((v) => {
+              s.origin.ignore = parseIgnore(v);
+              this.save();
+            })
+        );
+    }
+
+    // ---- 3 · Expose as MCP ----
+    containerEl.createEl('h3', { text: '3 · Expose as MCP' });
+
+    const scopeToggle = (scope: McpScope, name: string, desc: string) =>
+      new Setting(containerEl)
+        .setName(name)
+        .setDesc(desc)
+        .addToggle((t) =>
+          t.setValue(s.mcp.includes(scope)).onChange((v) => {
+            s.mcp = v ? Array.from(new Set([...s.mcp, scope])) : s.mcp.filter((x) => x !== scope);
+            this.save();
+          })
+        );
+
+    scopeToggle('local', 'Local scope', 'Expose this vault’s local working copy over MCP.');
+    scopeToggle('remote', 'Remote scope', 'Expose the cloud copy over MCP (after sync is connected).');
+
+    new Setting(containerEl)
+      .setName('MCP endpoint')
+      .setDesc('Connect Claude, ChatGPT, or Cursor to this URL to read and write the same memory.')
+      .addText((t) => {
+        t.setValue(MCP_ENDPOINT).setDisabled(true);
+        t.inputEl.addClass('ams-mono');
+        return t;
+      })
+      .addButton((b) =>
+        b
+          .setButtonText('Copy')
+          .setCta()
+          .onClick(async () => {
+            await navigator.clipboard.writeText(MCP_ENDPOINT);
+            new Notice('MCP endpoint copied');
+          })
+      );
+
+    // ---- vaults.json preview ----
+    containerEl.createEl('h3', { text: 'vaults.json preview' });
+    containerEl.createEl('p', {
+      cls: 'ams-sub',
+      text: `Written to ${s.configDir}/vaults.json — the config memory-core loads and validates.`,
+    });
+    this.errors = containerEl.createDiv({ cls: 'ams-errors' });
+    this.preview = containerEl.createEl('pre', { cls: 'ams-preview' });
+    this.refreshPreview();
+  }
+
+  private refreshPreview(): void {
+    if (!this.preview) return;
+    const s = this.host.settings;
+    this.preview.setText(JSON.stringify(buildVaultsConfig(s, this.host.vaultRootPath()), null, 2));
+    const errs = validateSettings(s);
+    this.errors.empty();
+    for (const e of errs) this.errors.createDiv({ cls: 'ams-error', text: `⚠ ${e}` });
+    // reflect the normalized name back so the user sees what gets written
+    const normalized = normalizeVaultName(s.vaultName);
+    if (normalized && normalized !== s.vaultName.trim()) {
+      this.errors.createDiv({ cls: 'ams-hint', text: `Saved as “${normalized}”.` });
+    }
   }
 }

@@ -20,6 +20,6 @@
     "inlineSourceMap": true,
     "inlineSources": true
   },
-  "include": ["src/**/*.ts", "e2e/**/*.ts", "playwright.config.ts"],
+  "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "coverage", "test-results", "playwright-report"]
 }
