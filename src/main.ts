@@ -267,7 +267,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     }
     this.statusDot.removeClass('is-gray', 'is-amber', 'is-green', 'is-red');
     this.statusDot.addClass(`is-${tone}`);
-    this.statusEl?.setText(tone === 'amber' ? 'Choose memory' : ''); // label only when a choice is needed
+    this.statusEl?.setText(tone === 'amber' ? 'Choose Memory' : ''); // label only when no memory is selected
     this.statusBar.setAttribute('aria-label', tip);
     this.statusBar.setAttribute('title', tip);
   }
@@ -278,27 +278,36 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
 
   /** The single source of truth for the plugin's quick actions, by state. */
   private actions(): PluginAction[] {
+    const settings: PluginAction = {
+      title: 'Open settings',
+      icon: 'settings',
+      run: () => this.openSettings(),
+    };
     if (!this.isSignedIn())
       return [
         { title: 'Sign in to Agentage', icon: 'log-in', run: () => this.openSignIn() },
-        { title: 'Open settings', icon: 'settings', run: () => this.openSettings() },
+        settings,
       ];
+    // Signed in but no memory yet: the only useful action is to pick one.
+    if (this.needsMemory())
+      return [
+        { title: 'Choose Memory', icon: 'library', run: () => this.chooseMemory() },
+        settings,
+      ];
+    // Memory selected: no "Choose Memory" here (change it from Settings); no Disconnect either.
     return [
       {
         title: 'Sync now',
         icon: 'refresh-cw',
         run: () => void this.syncNow().then((r) => new Notice(`Agentage Sync: ${r.message}`)),
       },
-      { title: 'Choose memory…', icon: 'library', run: () => this.chooseMemory() },
       { title: 'Open dashboard', icon: 'layout-dashboard', run: () => this.openDashboard() },
-      { title: 'Open settings', icon: 'settings', run: () => this.openSettings() },
-      { title: 'Disconnect', icon: 'log-out', run: () => void this.disconnect() },
+      settings,
     ];
   }
 
   /** Desktop status-bar dot → a context Menu at the cursor. */
   private showStatusMenu(evt: MouseEvent): void {
-    if (this.needsMemory()) return this.chooseMemory();
     const menu = new Menu();
     for (const a of this.actions())
       menu.addItem((i) =>
@@ -313,7 +322,6 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   /** Ribbon + command → a modal action-picker. Works on mobile (no status bar there, and
    * Menu.showAtMouseEvent does not render from a tap); the ribbon is the mobile entry. */
   private openActions(): void {
-    if (this.needsMemory()) return this.chooseMemory();
     openActionsMenu(this.app, this.actions());
   }
 
