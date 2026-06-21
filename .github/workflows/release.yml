@@ -165,7 +165,7 @@ jobs:
             **Agentage Sync** under Settings → Community plugins.
 
             ### Install (BRAT)
-            Add `agentage/obsidian-memory` in the BRAT plugin.
+            Add `agentage/obsidian-sync` in the BRAT plugin.
 
             See the [README](https://github.com/${{ github.repository }}#readme) for setup and privacy details.
           files: |

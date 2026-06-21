@@ -23,11 +23,11 @@ Two-way **Git** sync between your Obsidian vault and your private [Agentage Memo
 
 ### BRAT (beta)
 
-Install [BRAT](https://github.com/TfTHacker/obsidian42-brat), then **Add beta plugin** → `agentage/obsidian-memory`. BRAT keeps it auto-updated.
+Install [BRAT](https://github.com/TfTHacker/obsidian42-brat), then **Add beta plugin** → `agentage/obsidian-sync`. BRAT keeps it auto-updated.
 
 ### Manual
 
-From the [latest release](https://github.com/agentage/obsidian-memory/releases/latest), copy `main.js`, `manifest.json`, and `styles.css` into `<your-vault>/.obsidian/plugins/agentage-memory/`, then enable **Agentage Sync** under Settings → Community plugins.
+From the [latest release](https://github.com/agentage/obsidian-sync/releases/latest), copy `main.js`, `manifest.json`, and `styles.css` into `<your-vault>/.obsidian/plugins/agentage-memory/`, then enable **Agentage Sync** under Settings → Community plugins.
 
 ## Getting started
 
