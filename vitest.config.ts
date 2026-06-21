@@ -18,6 +18,7 @@ export default defineConfig({
         'src/main.ts',
         'src/settings-tab.ts',
         'src/memory-chooser.ts',
+        'src/actions-menu.ts',
         'src/git/vault-fs.ts',
         'src/git/git-test-server.ts',
       ],
