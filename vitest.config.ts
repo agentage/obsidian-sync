@@ -7,17 +7,17 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
-      // Excluded: Obsidian-runtime files (App/TFile/PluginSettingTab/requestUrl/setIcon),
+      // Excluded: Obsidian-runtime files (App/TFile/PluginSettingTab/setIcon),
       // the node-only test git server helper, and type/test files. The pure engine
-      // (merge-note, stream-utils, resolve-host, vaults-config) + the DI git-client
-      // (against a real local git server) ARE unit/integration tested.
+      // (merge-note, stream-utils, resolve-host, vaults-config), the DI git-client
+      // (against a real local git server), and the requestUrl HttpClient adapter
+      // (against a mocked requestUrl) ARE unit/integration tested.
       exclude: [
         '**/*.test.ts',
         '**/*.types.ts',
         'src/main.ts',
         'src/settings-tab.ts',
         'src/memory-chooser.ts',
-        'src/git/http-requesturl.ts',
         'src/git/vault-fs.ts',
         'src/git/git-test-server.ts',
       ],
