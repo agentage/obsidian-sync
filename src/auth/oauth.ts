@@ -19,6 +19,18 @@ export interface HttpResponse {
   status: number;
   json: unknown;
 }
+
+// Carries the HTTP status so callers can tell a rejected grant (4xx — clear the session)
+// from a transient/server error (5xx/network — keep tokens, retry later).
+export class OAuthHttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message);
+    this.name = 'OAuthHttpError';
+  }
+}
 export type HttpPost = (
   url: string,
   init: { headers: Record<string, string>; body: string }
@@ -70,7 +82,8 @@ async function postToken(
   const res = await post(tokenEndpoint, { headers: FORM, body: form(body) });
   if (res.status < 200 || res.status >= 300) {
     const d = res.json as { error_description?: string; error?: string } | null;
-    throw new Error(
+    throw new OAuthHttpError(
+      res.status,
       `Token request failed: ${d?.error_description ?? d?.error ?? `HTTP ${res.status}`}`
     );
   }

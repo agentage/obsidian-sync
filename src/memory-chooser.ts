@@ -1,9 +1,9 @@
 import { type App, Modal, Notice, Setting } from 'obsidian';
-import type { VaultInfo } from './settings';
+import type { VaultInfo, VaultListResult } from './settings';
 
 // What the chooser needs from the plugin. Kept narrow so it doesn't depend on main.
 export interface MemoryChooserHost {
-  listVaults(): Promise<VaultInfo[]>;
+  listVaults(): Promise<VaultListResult>;
   createVault(name: string): Promise<{ ok: boolean; vault?: string; error?: string }>;
   defaultVaultName(): string;
   selectVault(name: string): Promise<void>;
@@ -78,29 +78,34 @@ class MemoryModal extends Modal {
   }
 
   private async fillList(): Promise<void> {
-    const [vaults, cur] = [await this.host.listVaults(), this.host.currentVault()];
+    const [res, cur] = [await this.host.listVaults(), this.host.currentVault()];
     this.listEl.empty();
-    if (!vaults.length) {
+    if (!res.ok) {
+      this.listEl.createEl('p', {
+        text: `Couldn't load your memories: ${res.error}`,
+        cls: 'ams-hint',
+      });
+      new Setting(this.listEl).addButton((b) =>
+        b.setButtonText('Retry').onClick(() => {
+          this.listEl.empty();
+          this.listEl.createEl('p', { text: 'Loading your memories…', cls: 'ams-hint' });
+          void this.fillList();
+        })
+      );
+      return;
+    }
+    if (!res.vaults.length) {
       this.listEl.createEl('p', { text: 'No memories yet — create one below.', cls: 'ams-hint' });
       return;
     }
-    for (const v of vaults) {
+    for (const v of res.vaults) {
       const isCur = v.name === cur;
       const meta = describeVault(v);
       const row = new Setting(this.listEl)
         .setName(v.name)
-        .setDesc(isCur ? `current · ${meta}` : meta)
-        .addButton((b) =>
-          b
-            .setButtonText(isCur ? 'In use' : 'Use')
-            .setDisabled(isCur)
-            .onClick(async () => {
-              await this.host.selectVault(v.name);
-              this.close();
-            })
-        );
-      // Sync now only for the memory in use; switch to another with Use first.
+        .setDesc(isCur ? `current · ${meta}` : meta);
       if (isCur) {
+        // Already in use → offer Sync now.
         row.addButton((b) =>
           b
             .setCta()
@@ -111,6 +116,25 @@ class MemoryModal extends Modal {
               this.close();
             })
         );
+      } else {
+        // Switch to it: Use (select only) or Use & sync (select + sync immediately).
+        row
+          .addButton((b) =>
+            b.setButtonText('Use').onClick(async () => {
+              await this.host.selectVault(v.name);
+              this.close();
+            })
+          )
+          .addButton((b) =>
+            b
+              .setCta()
+              .setButtonText('Use & sync')
+              .onClick(async () => {
+                b.setDisabled(true).setButtonText('Syncing…');
+                await this.host.syncVault(v.name);
+                this.close();
+              })
+          );
       }
     }
   }

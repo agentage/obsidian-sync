@@ -102,4 +102,26 @@ describe('auth-flow', () => {
     expect(post).not.toHaveBeenCalled();
     expect(await flow(fakeStore(), post).f.getValidToken()).toBeNull();
   });
+
+  it('getValidToken clears the dead session (and notifies onChange) on a 4xx refresh', async () => {
+    const store = fakeStore({ accessToken: 'AT0', refreshToken: 'RT0', expiresAt: NOW - 1 }, 'cid');
+    const post = vi.fn(async () => ({ status: 400, json: { error: 'invalid_grant' } }));
+    const onChange = vi.fn();
+    const notify = vi.fn();
+    const tok = await flow(store, post, { onChange, notify }).f.getValidToken();
+    expect(tok).toBeNull();
+    expect(store.load()).toBeNull(); // session cleared → UI flips to signed-out
+    expect(onChange).toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('session expired'));
+  });
+
+  it('getValidToken keeps tokens on a transient 5xx refresh (retryable, not a sign-out)', async () => {
+    const store = fakeStore({ accessToken: 'AT0', refreshToken: 'RT0', expiresAt: NOW - 1 }, 'cid');
+    const post = vi.fn(async () => ({ status: 503, json: null }));
+    const onChange = vi.fn();
+    const tok = await flow(store, post, { onChange }).f.getValidToken();
+    expect(tok).toBeNull();
+    expect(store.load()).not.toBeNull(); // tokens preserved
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });
