@@ -100,7 +100,9 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       void this.auth.handleCallback(params).then(() => this.onAuthChanged());
     });
 
-    this.addRibbonIcon('refresh-cw', 'Agentage Sync', () => this.openSettings());
+    // Ribbon shows on mobile (the status bar does NOT), so it opens the same menu —
+    // it's the only way to reach Sync now / Choose memory / dashboard on mobile.
+    this.addRibbonIcon('refresh-cw', 'Agentage Sync', (evt) => this.showStatusMenu(evt));
     const sb = this.addStatusBarItem();
     this.statusBar = sb;
     sb.addClass('ams-statusbar', 'mod-clickable');
