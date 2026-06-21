@@ -1,7 +1,7 @@
 {
   "name": "obsidian-sync",
-  "version": "0.1.6",
-  "description": "Agentage Memory — Obsidian plugin. One memory, every AI, owned by you.",
+  "version": "0.2.0",
+  "description": "Sync your vault to a private memory that any AI reads and writes over MCP: Claude, ChatGPT, Cursor, and any MCP client share the same Markdown you own.",
   "private": true,
   "type": "module",
   "main": "main.js",
@@ -35,7 +35,7 @@
     "sync"
   ],
   "author": "agentage",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.0.0",

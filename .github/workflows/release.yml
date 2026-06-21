@@ -144,6 +144,10 @@ jobs:
         if: steps.ver.outputs.release == 'true'
         run: npm run build
 
+      - name: Store-compliance checks (hosts + README disclosures)
+        if: steps.ver.outputs.release == 'true'
+        run: npm run check:hosts && npm run check:docs
+
       - name: Verify bundle has no node builtins (mobile-safe)
         if: steps.ver.outputs.release == 'true'
         run: node scripts/check-bundle.mjs
