@@ -36,4 +36,13 @@ describe('backup-ref (R16 data-loss guard)', () => {
     expect(await git.resolveRef({ fs, dir, ref: 'main' })).toBe(first);
     expect(fs.readFileSync(path.join(dir, 'note.md'), 'utf8')).toContain('v1');
   });
+
+  it('sanitizes a colon-bearing ISO-timestamp label into a valid ref name', async () => {
+    const head = await commit('note.md', 'v1\n', 'c1');
+    // ':' is illegal in git ref names — an ISO timestamp must not be used verbatim.
+    const backup = await snapshotBackupRef(fs, { dir }, '2026-06-21T00:28:48.123Z');
+    expect(backup).not.toContain(':');
+    expect(backup).toBe('refs/agentage/local-2026-06-21T00-28-48-123Z');
+    expect(await git.resolveRef({ fs, dir, ref: backup })).toBe(head); // ref actually written
+  });
 });

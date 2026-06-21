@@ -12,7 +12,10 @@ export interface RefCtx {
 export async function snapshotBackupRef(fs: FsClient, c: RefCtx, label: string): Promise<string> {
   const ref = c.ref ?? 'main';
   const oid = await git.resolveRef({ fs, dir: c.dir, gitdir: c.gitdir, ref });
-  const backup = `refs/agentage/local-${label}`;
+  // Git ref names forbid ':' (and more) — an ISO timestamp label would be rejected, so
+  // reduce the label to ref-safe chars (e.g. 2026-06-21T00:28:48.1Z -> 2026-06-21T00-28-48-1Z).
+  const safe = label.replace(/[^0-9A-Za-z]+/g, '-').replace(/^-+|-+$/g, '') || 'snapshot';
+  const backup = `refs/agentage/local-${safe}`;
   await git.writeRef({ fs, dir: c.dir, gitdir: c.gitdir, ref: backup, value: oid, force: true });
   return backup;
 }

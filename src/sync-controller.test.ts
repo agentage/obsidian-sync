@@ -16,7 +16,9 @@ const mergeDriver: MergeDriverCallback = ({ contents }) => {
   return { cleanMerge: clean, mergedText: text };
 };
 const client = createGitClient({ fs, http: nodeHttp }, mergeDriver);
-const controllerFor = (dir: string) => createSyncController({ client, fs, dir, now: () => 'TS' });
+// A realistic ISO timestamp (with colons) — backup-ref labels must survive it (ref names forbid ':').
+const controllerFor = (dir: string) =>
+  createSyncController({ client, fs, dir, now: () => '2026-06-21T00:00:00.000Z' });
 
 let root: string;
 let tmp: string;

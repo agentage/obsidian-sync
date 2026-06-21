@@ -166,8 +166,14 @@ export function createSyncController(deps: SyncControllerDeps) {
 
     // remote has history: backup HEAD → COMMIT local first (commit-before-pull, so a merge
     // never has to overwrite uncommitted work) → pull(merge) → surface conflicts → push.
-    if (await localHead(ctx))
-      await snapshotBackupRef(deps.fs, { dir: deps.dir, gitdir, ref }, deps.now());
+    // The backup is a best-effort safety net — never let it block the sync.
+    if (await localHead(ctx)) {
+      try {
+        await snapshotBackupRef(deps.fs, { dir: deps.dir, gitdir, ref }, deps.now());
+      } catch (e) {
+        console.warn('[Agentage Sync] backup ref skipped:', (e as Error).message);
+      }
+    }
     const staged = await stageChanges(ctx, new Set());
     if (staged > 0) await deps.client.commit(ctx, `Sync ${deps.now()}`);
 
