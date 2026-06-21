@@ -351,9 +351,13 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     this.onAuthChanged(); // re-render settings + status bar
   }
 
+  currentVault(): string {
+    return this.settings.vault;
+  }
+
   /** Open the memory chooser popup (pick existing or create new). */
   chooseMemory(): void {
-    void openMemoryChooser(this.app, this);
+    openMemoryChooser(this.app, this);
   }
 
   // --- auth (SettingsHost) ---
