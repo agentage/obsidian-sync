@@ -55,7 +55,7 @@ The plugin is `isDesktopOnly: false` and runs its git engine over Obsidian's vau
 ## Privacy & network use
 
 - **Account required:** you need an agentage account to sign in and sync.
-- **Optional payments:** Agentage Memory has a free tier; paid plans are optional. See [agentage.io](https://agentage.io).
+- **Free:** Agentage Memory is free to use, up to a 100 MB storage cap per account.
 - **No calls until you act:** a fresh or signed-out install makes **no network requests at all** — the plugin only contacts the network once you Connect or Sync.
 - **Network use:** when active, the plugin contacts `auth.agentage.io` (sign-in, OAuth 2.1 / PKCE) and **`sync.agentage.io`** (syncing your vault over Git). AI access to the same memory happens server-side over MCP at `memory.agentage.io`.
 - **Privacy policy:** <https://agentage.io/privacy>. **Terms of Service:** <https://agentage.io/terms>.
