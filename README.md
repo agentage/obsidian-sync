@@ -23,7 +23,7 @@ Stop copying notes into every chatbot. **Agentage Sync** makes your [Obsidian](h
 
 ### Community plugins (recommended)
 
-*Coming soon - pending Obsidian review.* Once listed: **Settings → Community plugins → Browse**, search **Agentage Sync**, then **Install** and **Enable**.
+Once it is listed in the directory: **Settings → Community plugins → Browse**, search **Agentage Sync**, then **Install** and **Enable**.
 
 ### BRAT (beta)
 
