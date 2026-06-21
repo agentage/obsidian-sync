@@ -1,6 +1,6 @@
 {
   "name": "obsidian-sync",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Sync your vault to a private memory that any AI reads and writes over MCP: Claude, ChatGPT, Cursor, and any MCP client share the same Markdown you own.",
   "private": true,
   "type": "module",
@@ -57,6 +57,6 @@
   "dependencies": {
     "diff3": "^0.0.4",
     "isomorphic-git": "^1.38.5",
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.2.0"
   }
 }

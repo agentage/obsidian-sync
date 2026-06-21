@@ -31,7 +31,7 @@ Install [BRAT](https://github.com/TfTHacker/obsidian42-brat), then **Add beta pl
 
 ### Manual
 
-From the [latest release](https://github.com/agentage/obsidian-sync/releases/latest), copy `main.js`, `manifest.json`, and `styles.css` into `<your-vault>/.obsidian/plugins/agentage-memory/`, then enable **Agentage Sync** under Settings → Community plugins.
+From the [latest release](https://github.com/agentage/obsidian-sync/releases/latest), copy `main.js`, `manifest.json`, and `styles.css` into your vault's `.obsidian/plugins/agentage-memory/` folder, then enable **Agentage Sync** under Settings → Community plugins.
 
 ## Getting started
 

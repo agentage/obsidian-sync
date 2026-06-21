@@ -1,7 +1,7 @@
 {
 	"id": "agentage-memory",
 	"name": "Agentage Sync",
-	"version": "0.2.1",
+	"version": "0.2.2",
 	"minAppVersion": "1.11.4",
 	"description": "Let Claude, ChatGPT, Cursor, and any MCP client read and write your Obsidian vault. Two-way Git sync to a private memory, safe merges with flagged conflicts, plain Markdown you own. Up to 100 MB included.",
 	"author": "agentage",
