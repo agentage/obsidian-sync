@@ -28,10 +28,14 @@ import type { GetJson } from './auth/discovery';
 import { HostResolver, buildRepoUrl } from './resolve-host';
 import { openMemoryChooser } from './memory-chooser';
 
-const AUTH_ORIGIN = 'https://auth.agentage.io';
-const SYNC_ORIGIN = 'https://sync.agentage.io';
-const DASHBOARD_ORIGIN = 'https://dashboard.agentage.io';
-const SITE_FQDN = 'agentage.io';
+// Single-host: every origin derives from SITE_FQDN. Defaults to prod; the
+// AGENTAGE_SITE_FQDN env var (desktop only, same pattern as AGENTAGE_CONFIG_DIR)
+// repoints it at dev for e2e (e.g. dev.agentage.io -> sync.dev.agentage.io).
+const SITE_FQDN =
+  (typeof process !== 'undefined' ? process.env?.AGENTAGE_SITE_FQDN : undefined) ?? 'agentage.io';
+const AUTH_ORIGIN = `https://auth.${SITE_FQDN}`;
+const SYNC_ORIGIN = `https://sync.${SITE_FQDN}`;
+const DASHBOARD_ORIGIN = `https://dashboard.${SITE_FQDN}`;
 
 // 3-way merge driver: split-YAML field-LWW + diff3 body (see git/merge-note).
 const agentageMergeDriver: MergeDriverCallback = ({ contents }) => {
