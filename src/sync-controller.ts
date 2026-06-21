@@ -177,14 +177,41 @@ export function createSyncController(deps: SyncControllerDeps) {
     const staged = await stageChanges(ctx, new Set());
     if (staged > 0) await deps.client.commit(ctx, `Sync ${deps.now()}`);
 
-    const { conflicted } = await deps.client.pull(ctx);
-    if (conflicted.length > 0) {
-      await writeConflictNote(conflicted);
-      status('conflict', `${conflicted.length} file(s) need resolution`);
-      return { action: 'synced', committed: staged > 0, pushed: false, conflicted };
+    const pulled = await deps.client.pull(ctx);
+    if (pulled.unmergeable) {
+      const message =
+        "Automatic merge isn't possible for this history (diverged too far). " +
+        'Resolve in another client or re-clone, then sync again.';
+      status('conflict', message);
+      return { action: 'synced', committed: staged > 0, pushed: false, conflicted: [], message };
+    }
+    if (pulled.conflicted.length > 0) {
+      await writeConflictNote(pulled.conflicted);
+      status('conflict', `${pulled.conflicted.length} file(s) need resolution`);
+      return {
+        action: 'synced',
+        committed: staged > 0,
+        pushed: false,
+        conflicted: pulled.conflicted,
+      };
     }
 
-    await deps.client.push(ctx);
+    const pushed = await deps.client.push(ctx);
+    if (pushed.unmergeable || pushed.conflicted.length > 0) {
+      // A concurrent push landed; the re-pull conflicted — surface it instead of erroring.
+      if (pushed.conflicted.length > 0) await writeConflictNote(pushed.conflicted);
+      const message = pushed.unmergeable
+        ? "Automatic merge isn't possible for this history (diverged too far). Resolve and sync again."
+        : `${pushed.conflicted.length} file(s) need resolution`;
+      status('conflict', message);
+      return {
+        action: 'synced',
+        committed: staged > 0,
+        pushed: false,
+        conflicted: pushed.conflicted,
+        message,
+      };
+    }
     status('idle');
     return { action: 'synced', committed: staged > 0, pushed: true, conflicted: [] };
   }

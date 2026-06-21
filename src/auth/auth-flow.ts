@@ -11,6 +11,7 @@ import {
 import {
   exchangeAuthCode,
   isTokenExpired,
+  OAuthHttpError,
   refreshTokens,
   registerClient,
   revokeToken,
@@ -143,7 +144,15 @@ export function createAuthFlow(deps: AuthFlowDeps): AuthFlow {
       );
       await deps.store.save(refreshed);
       return refreshed.accessToken;
-    } catch {
+    } catch (e) {
+      // A rejected refresh (4xx: invalid/expired/revoked refresh token) means the session is
+      // dead — clear it so the UI flips to signed-out instead of a green dot that fails every
+      // sync. Keep tokens on transient/server errors (5xx/network) so a blip isn't a sign-out.
+      if (e instanceof OAuthHttpError && e.status >= 400 && e.status < 500) {
+        await deps.store.clear();
+        deps.onChange?.();
+        deps.notify('Your Agentage session expired — sign in again.');
+      }
       return null;
     }
   };

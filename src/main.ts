@@ -3,6 +3,7 @@ import type { FsClient, MergeDriverCallback } from 'isomorphic-git';
 import {
   type AgentageMemorySettings,
   type VaultInfo,
+  type VaultListResult,
   DEFAULT_SETTINGS,
   normalizeVaultName,
 } from './settings';
@@ -355,10 +356,11 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   }
 
   // --- memory selection (SettingsHost) ---
-  /** Existing server memories + their info (files/folders/updated) via GET /vaults. */
-  async listVaults(): Promise<VaultInfo[]> {
+  /** Existing server memories + their info (files/folders/updated) via GET /vaults. Returns a
+   * result so the chooser can show a real error (with Retry) vs an empty account. */
+  async listVaults(): Promise<VaultListResult> {
     const token = await this.auth.getValidToken();
-    if (!token) return [];
+    if (!token) return { ok: false, error: 'Sign in to Agentage first.' };
     try {
       const r = await requestUrl({
         url: `${SYNC_ORIGIN}/vaults`,
@@ -366,13 +368,17 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
         headers: { Authorization: `Bearer ${token}` },
         throw: false,
       });
-      if (r.status < 200 || r.status >= 300) return [];
+      if (r.status < 200 || r.status >= 300) {
+        const body = safeJson(r.text) as { error?: string } | null;
+        return { ok: false, error: body?.error ?? `Couldn't load memories (HTTP ${r.status})` };
+      }
       const raw = (safeJson(r.text) as { vaults?: unknown })?.vaults;
-      return Array.isArray(raw)
+      const vaults = Array.isArray(raw)
         ? raw.map(parseVaultInfo).filter((v): v is VaultInfo => v !== null)
         : [];
-    } catch {
-      return [];
+      return { ok: true, vaults };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
     }
   }
 
@@ -441,8 +447,14 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   isSignedIn(): boolean {
     return this.auth.isSignedIn();
   }
-  disconnect(): Promise<void> {
-    return this.auth.disconnect();
+  async disconnect(): Promise<void> {
+    await this.auth.disconnect();
+    // Drop the selected memory so the next session starts in the amber "Choose Memory" state
+    // and re-validates the pick — never resurface a stale (possibly deleted) memory as active.
+    this.settings.vault = '';
+    this.lastVault = undefined;
+    await this.saveSettings();
+    this.refreshStatus();
   }
 
   // Git fs runs over Obsidian's vault adapter on BOTH desktop and mobile (the proven
@@ -503,6 +515,8 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
           ok: false,
           message: `Conflicts in ${r.conflicted.length} file(s) — see "Agentage Sync Conflicts".`,
         };
+      // Unmergeable history (criss-cross): not pushed, no per-file markers — surface the reason.
+      if (!r.pushed && r.message) return { ok: false, message: r.message };
       const bits = [r.action, r.committed ? 'committed' : '', r.pushed ? 'pushed' : ''].filter(
         Boolean
       );

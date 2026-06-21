@@ -47,6 +47,10 @@ export interface VaultInfo {
   updated: string | null;
   empty: boolean;
 }
+
+// Result of listing memories: lets the chooser tell a genuinely empty account ({ok,vaults:[]})
+// from a server/network failure ({ok:false}), instead of both rendering as "No memories yet".
+export type VaultListResult = { ok: true; vaults: VaultInfo[] } | { ok: false; error: string };
 export const DEFAULT_REMOTE_HOST = 'https://sync.agentage.io';
 export const VAULTS_SCHEMA_URL = 'https://memory.agentage.io/schema/vaults.json';
 // The managed remote alias. memory-core resolves "agentage" to the cloud git URL

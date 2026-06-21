@@ -25,6 +25,9 @@ export interface RepoCtx {
 
 export interface PullResult {
   conflicted: string[];
+  // True when the histories can't be 3-way merged automatically (criss-cross / multiple merge
+  // bases — MergeNotSupportedError). No filepaths; the caller surfaces an actionable note.
+  unmergeable?: boolean;
 }
 
 const AUTHOR = { name: 'Agentage Memory', email: 'memory@agentage.io' };
@@ -103,23 +106,35 @@ export function createGitClient({ fs, http }: GitClientDeps, mergeDriver: MergeD
           // (abortOnConflict:false) — do NOT checkout, that would discard them.
           return { conflicted: e.data.filepaths };
         }
-        throw e; // MergeNotSupportedError (criss-cross) handled by the caller (backup + LWW)
+        if (e instanceof Errors.MergeNotSupportedError) {
+          // Criss-cross / multiple merge bases: iso-git can't auto-merge and the worktree is
+          // left intact. Signal the caller to surface a clear "resolve manually" note rather
+          // than bubbling a raw error. (No auto LWW fallback — it would risk silent data loss.)
+          return { conflicted: [], unmergeable: true };
+        }
+        throw e;
       }
     },
 
     // No force. A non-ff push throws PushRejectedError → re-pull + re-push (still no force).
-    async push(c: RepoCtx): Promise<void> {
+    // Returns the conflict outcome: an empty result = pushed; a conflicted/unmergeable result
+    // means the re-pull hit a conflict and we did NOT push — the caller surfaces it.
+    async push(c: RepoCtx): Promise<PullResult> {
       const ref = c.ref ?? 'main';
       const doPush = () => wrapFS(git.push({ ...base(c), ...auth(c), http, url: c.url, ref }));
       try {
         const r = await doPush();
         if (!r.ok) throw new Error('push not ok');
+        return { conflicted: [] };
       } catch (e) {
         if (e instanceof Errors.PushRejectedError) {
-          await client.pull(c);
+          // Someone pushed between our pull and push. Re-pull (merge); if THAT conflicts,
+          // propagate it instead of blindly re-pushing into a "not ok after rebase" error.
+          const pulled = await client.pull(c);
+          if (pulled.conflicted.length > 0 || pulled.unmergeable) return pulled;
           const r2 = await doPush();
           if (!r2.ok) throw new Error('push not ok after rebase');
-          return;
+          return { conflicted: [] };
         }
         throw e;
       }
