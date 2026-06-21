@@ -295,11 +295,12 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     app.setting?.openTabById?.(this.manifest.id);
   }
 
-  /** Open the dashboard at the vault we actually synced; before any sync, open the list
-   * (the server vault name can differ from the Obsidian name, so never guess a path). */
+  /** Open the dashboard at the current memory, e.g. .../memories/default. Falls back to
+   * the last synced one, then the memories list if nothing is chosen yet. */
   private openDashboard(): void {
+    const v = this.settings.vault || this.lastVault;
     const base = `${DASHBOARD_ORIGIN}/memories`;
-    window.open(this.lastVault ? `${base}/${encodeURIComponent(this.lastVault)}` : base, '_blank');
+    window.open(v ? `${base}/${encodeURIComponent(v)}` : base, '_blank');
   }
 
   vaultRootPath(): string {
