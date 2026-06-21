@@ -1,6 +1,6 @@
 {
   "name": "obsidian-sync",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Agentage Memory — Obsidian plugin. One memory, every AI, owned by you.",
   "private": true,
   "type": "module",
