@@ -1,7 +1,7 @@
 {
 	"id": "agentage-memory",
 	"name": "Agentage Sync",
-	"version": "0.1.3",
+	"version": "0.1.4",
 	"minAppVersion": "1.11.4",
 	"description": "Sync your vault to a private memory that any AI reads and writes over MCP: Claude, ChatGPT, Cursor, and any MCP client share the same Markdown you own.",
 	"author": "agentage",
