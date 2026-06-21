@@ -157,12 +157,12 @@ jobs:
           draft: ${{ github.event.inputs.draft == 'true' }}
           prerelease: ${{ contains(steps.ver.outputs.tag, '-') }}
           body: |
-            **Agentage Memory ${{ steps.ver.outputs.tag }}** — the shared memory layer for every AI.
+            **Agentage Sync ${{ steps.ver.outputs.tag }}** — sync your Obsidian vault to your Agentage Memory.
 
             ### Install (manual)
             Download `main.js`, `manifest.json`, and `styles.css` below into
             `<your-vault>/.obsidian/plugins/agentage-memory/`, then enable
-            **Agentage Memory** under Settings → Community plugins.
+            **Agentage Sync** under Settings → Community plugins.
 
             ### Install (BRAT)
             Add `agentage/obsidian-memory` in the BRAT plugin.

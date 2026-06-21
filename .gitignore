@@ -4,8 +4,6 @@ main.js
 data.json
 .DS_Store
 .env
-test-results/
-playwright-report/
 coverage/
 .pr-body-tmp.md
 

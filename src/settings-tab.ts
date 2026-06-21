@@ -1,136 +1,130 @@
-import { Notice, PluginSettingTab, Setting, requestUrl, type App, type Plugin } from 'obsidian';
-import { isUnconfiguredDefault, pingServer } from './connection';
-import { DEFAULT_SETTINGS } from './settings';
-import type { SyncController } from './sync-controller';
-import type { AuthFlow } from './auth-flow';
+import { type App, PluginSettingTab, Setting, debounce } from 'obsidian';
+import { CONNECT_URL, validateSettings, type AgentageMemorySettings } from './settings';
+import type { ApplyResult } from './vaults-config';
+
+// What the settings page needs from the plugin (avoids a circular import on main).
+export interface SettingsHost {
+  settings: AgentageMemorySettings;
+  saveSettings(): Promise<void>;
+  vaultRootPath(): string;
+  isDesktop: boolean;
+  openSignIn(): void;
+  isSignedIn(): boolean;
+  disconnect(): Promise<void>;
+  applyConfig(): Promise<ApplyResult>;
+  /** Open the memory chooser popup (pick an existing memory or create a new one). */
+  chooseMemory(): void;
+}
 
 export class AgentageMemorySettingTab extends PluginSettingTab {
-  constructor(
-    app: App,
-    plugin: Plugin,
-    private readonly core: SyncController,
-    private readonly auth: AuthFlow
-  ) {
-    super(app, plugin);
+  private host: SettingsHost;
+  private status?: HTMLElement;
+  private writeDebounced: () => void;
+
+  constructor(app: App, host: SettingsHost) {
+    super(app, host as unknown as never);
+    this.host = host;
+    this.writeDebounced = debounce(() => void this.write(), 700, true);
+  }
+
+  /** On any change: persist plugin data now, write vaults.json debounced. */
+  private touch(): void {
+    void this.host.saveSettings();
+    this.writeDebounced();
+  }
+
+  private async write(): Promise<void> {
+    if (validateSettings(this.host.settings).length) return this.setStatus('Not saved yet.', 'err');
+    if (!this.host.isDesktop) return this.setStatus('Saved in the app.', 'muted');
+    this.setStatus('Saving…', 'muted');
+    const res = await this.host.applyConfig();
+    this.setStatus(res.ok ? 'Saved' : `Couldn’t save: ${res.error}`, res.ok ? 'ok' : 'err');
   }
 
   display(): void {
     const { containerEl } = this;
+    const s = this.host.settings;
+    this.status = undefined;
     containerEl.empty();
+    containerEl.addClass('ams-settings');
 
-    this.renderAccount(containerEl);
-    this.renderLocalDev(containerEl);
-  }
+    containerEl.createEl('p', {
+      cls: 'ams-sub',
+      text: 'One memory for all your AI — backed up, in sync, and readable by Claude, ChatGPT, Cursor, and more.',
+    });
 
-  private renderAccount(containerEl: HTMLElement): void {
-    new Setting(containerEl).setName('Account').setHeading();
-
-    new Setting(containerEl)
-      .setName('Agentage Memory')
-      .setDesc(
-        this.auth.isSignedIn()
-          ? 'Connected — this vault syncs to your Agentage Memory.'
-          : 'Start syncing this vault to your Agentage Memory.'
-      )
-      .addButton((btn) => {
-        if (this.auth.isSignedIn()) {
-          btn.setButtonText('Sign out').onClick(() => this.auth.signOut());
-        } else {
-          btn
-            .setButtonText('Start sync')
+    // ---- Connect (top, primary) ----
+    const connect = new Setting(containerEl);
+    if (this.host.isSignedIn()) {
+      connect
+        .setName('Connected to Agentage')
+        .setDesc('Your account is linked. The sign-in token is stored privately on this device.')
+        .addButton((b) =>
+          b
+            .setWarning()
+            .setButtonText('Disconnect')
+            .onClick(async () => {
+              await this.host.disconnect();
+              this.display();
+            })
+        );
+    } else {
+      connect
+        .setName('Agentage Sync')
+        .setDesc('Sign in to start syncing this vault with your Agentage Memory.')
+        .addButton((b) =>
+          b
             .setCta()
-            .onClick(() => this.auth.startSignIn());
-        }
-      });
+            .setButtonText('Start sync with agentage')
+            .onClick(() => this.host.openSignIn())
+        );
+    }
+    connect.nameEl.addClass('ams-big');
 
+    // ---- Memory (only once signed in): a button that opens the chooser popup ----
+    if (this.host.isSignedIn()) {
+      const cur = s.vault;
+      new Setting(containerEl)
+        .setName('Memory')
+        .setDesc(cur ? `This vault syncs into "${cur}".` : 'No memory chosen yet.')
+        .addButton((b) =>
+          b
+            .setCta()
+            .setButtonText(cur ? 'Change memory…' : 'Choose memory…')
+            .onClick(() => this.host.chooseMemory())
+        );
+    }
+
+    // ---- AI access over MCP (on by default) ----
     new Setting(containerEl)
-      .setName('Auth endpoint')
-      .setDesc('GoTrue base URL. Leave the default unless told otherwise.')
-      .addText((text) =>
-        text
-          .setPlaceholder('https://memory.agentage.io/auth/v1')
-          .setValue(this.core.getSettings().authBase)
-          .onChange((value) => this.core.setAuthBase(value))
+      .setName('Expose remote MCP')
+      .setDesc('Let AI apps anywhere — Claude, ChatGPT, Cursor — read and write your notes.')
+      .addToggle((t) =>
+        t.setValue(s.mcp.includes('remote')).onChange((v) => this.setScope('remote', v))
       );
 
-    new Setting(containerEl)
-      .setName('Auth key')
-      .setDesc('Public Agentage auth key (provided with your account). Required to sign in.')
-      .addText((text) =>
-        text
-          .setValue(this.core.getSettings().anonKey)
-          .onChange((value) => this.core.setAnonKey(value))
-      );
+    this.status = containerEl.createDiv({ cls: 'ams-status' });
+
+    // ---- How to connect AI apps over MCP ----
+    const docs = containerEl.createEl('p', { cls: 'ams-hint' });
+    docs.appendText('Connect Claude, ChatGPT, Cursor and more — see ');
+    docs.createEl('a', { text: 'how to connect', href: CONNECT_URL });
+    docs.appendText('.');
   }
 
-  private renderLocalDev(containerEl: HTMLElement): void {
-    new Setting(containerEl).setName('Local dev').setHeading();
+  /** Add/remove an MCP scope, then persist. */
+  private setScope(scope: 'local' | 'remote', on: boolean): void {
+    const s = this.host.settings;
+    s.mcp = on ? Array.from(new Set([...s.mcp, scope])) : s.mcp.filter((x) => x !== scope);
+    this.touch();
+  }
 
-    new Setting(containerEl)
-      .setName('Server URL')
-      .setDesc('Your Agentage Memory cloud endpoint. Leave the default unless told otherwise.')
-      .addText((text) =>
-        text
-          .setPlaceholder('https://memory.agentage.io')
-          .setValue(this.core.getSettings().serverUrl)
-          .onChange((value) => this.core.setServerUrl(value))
-      );
-
-    new Setting(containerEl)
-      .setName('Username')
-      .setDesc('CouchDB username — local dev only. Stored in encrypted secret storage.')
-      .addText((text) =>
-        text
-          .setPlaceholder('admin')
-          .setValue(this.core.getBasicCreds().username)
-          .onChange((value) => this.core.setUsername(value))
-      );
-
-    new Setting(containerEl)
-      .setName('Database name')
-      .setDesc('CouchDB database. Override only for tests or per-vault setups.')
-      .addText((text) =>
-        text
-          .setPlaceholder('agentage-memory')
-          .setValue(this.core.getSettings().dbName)
-          .onChange((value) => this.core.setDbName(value))
-      );
-
-    new Setting(containerEl)
-      .setName('Password')
-      .setDesc('CouchDB password — local dev only. Stored in encrypted secret storage.')
-      .addText((text) => {
-        text
-          .setPlaceholder('agentage')
-          .setValue(this.core.getBasicCreds().password)
-          .onChange((value) => this.core.setPassword(value));
-        text.inputEl.type = 'password';
-      });
-
-    new Setting(containerEl)
-      .setName('Test connection')
-      .setDesc('Ping the server URL to confirm it is reachable.')
-      .addButton((btn) =>
-        btn.setButtonText('Test').onClick(async () => {
-          const url = this.core.getSettings().serverUrl;
-          // The default cloud host isn't a CouchDB; guide the user to sign in
-          // rather than pinging it and reporting a meaningless HTTP failure.
-          if (isUnconfiguredDefault(url, DEFAULT_SETTINGS.serverUrl)) {
-            new Notice('Not configured — sign in to start sync');
-            return;
-          }
-          btn.setDisabled(true).setButtonText('Testing…');
-          const r = await pingServer(url, async (u) => {
-            const res = await requestUrl({ url: u, method: 'GET', throw: false });
-            return { status: res.status };
-          });
-          btn.setDisabled(false).setButtonText('Test');
-          new Notice(
-            r.ok
-              ? `Connected (HTTP ${r.status})`
-              : `Failed: ${r.error ?? `HTTP ${r.status ?? '?'}`}`
-          );
-        })
-      );
+  private setStatus(text: string, kind: 'ok' | 'err' | 'muted'): void {
+    if (!this.status) return;
+    this.status.empty();
+    this.status.createDiv({
+      cls: `ams-status-line ams-${kind}`,
+      text: kind === 'ok' ? `✓ ${text}` : text,
+    });
   }
 }

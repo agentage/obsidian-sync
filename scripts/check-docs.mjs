@@ -10,7 +10,7 @@ const required = [
   'sync.agentage.io', // the single host the plugin contacts
   'agentage.io/privacy',
   'agentage.io/terms',
-  'PouchDB', // third-party attribution (Apache-2.0)
+  'isomorphic-git', // third-party attribution (MIT)
   'No calls until you act', // honest disclosure of the no-network-on-load gate
 ];
 // Hosts the shipped build never contacts must not be advertised (README⇄build

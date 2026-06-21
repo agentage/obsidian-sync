@@ -1,247 +1,209 @@
-/**
- * The plugin's sync core, as a closure factory. All mutable state (settings,
- * creds, the live replication handle, layout-ready flag) lives in closure
- * variables rather than `this` fields, so `main.ts` stays a thin Obsidian
- * adapter. Obsidian capabilities are injected via `SyncDeps`; the inbound apply,
- * status rendering, and vault watching live in their own focused modules.
- */
-import { DEFAULT_SETTINGS, normalizeServerUrl, type AgentageMemorySettings } from './settings';
-import { destroyLocalDb, getLocalDb } from './pouch';
-import { startContinuousSync, type ReplicationHandle, type SyncChange } from './replication';
-import { obsidianFetchForPouch } from './obsidian-fetch';
-import { basicAuthProvider, bearerAuthProvider, type AuthProvider } from './auth';
-import { isBootstrapExpired, type SyncBootstrap } from './bootstrap';
-import {
-  DEFAULT_BASIC_CREDS,
-  PASSWORD_SECRET,
-  USERNAME_SECRET,
-  resolveBasicCreds,
-  stripLegacyCreds,
-  type BasicCreds,
-} from './credentials';
-import { type StatusState } from './status';
-import { createEchoSuppress } from './echo-suppress';
-import { type VaultGateway } from './apply-doc';
-import { obsidianVaultGateway } from './obsidian-vault-gateway';
-import { describeErr } from './errors';
-import { applyPulledDoc, seedLocalReplica } from './inbound';
-import { renderStatus } from './status-bar';
-import { registerVaultWatchers } from './vault-watcher';
-import { pushActiveNote } from './push-note';
-import { shouldStartReplication } from './connection';
-import type { PushCreds } from './replication';
-import type { SyncController, SyncDeps } from './sync-controller.types';
+// Sync lifecycle orchestration (DI, no Obsidian import → unit-testable against a real
+// local git server). Ties the git client + 3-way merge + backup ref together:
+//   ensure repo (clone | seed | adopt-guard) → pull(merge) → on conflict: surface, stop
+//   → stage local changes (skip conflicts) → commit → push (never force).
+// Single-flight. main wires the Obsidian fs/http + token; tests inject node fs + a
+// node-http git client.
+import type { FsClient } from 'isomorphic-git';
+import type { GitClient, RepoCtx } from './git/git-client';
+import { snapshotBackupRef } from './git/backup-ref';
 
-export type { SyncController, SyncDeps } from './sync-controller.types';
+export type SyncStatus = 'idle' | 'syncing' | 'error' | 'conflict';
 
-const DEFAULT_DB_NAME = 'agentage-memory';
+export interface SyncControllerDeps {
+  client: GitClient;
+  fs: FsClient;
+  dir: string; // worktree
+  gitdir?: string; // defaults `${dir}/.git`
+  ref?: string; // default 'main'
+  ignore?: string[]; // worktree-relative paths never staged (e.g. the config folder)
+  conflictNote?: string; // default 'Agentage Sync Conflicts.md'
+  onStatus?: (s: SyncStatus, msg?: string) => void;
+  now: () => string; // backup-ref label
+}
 
-export function createSyncController(deps: SyncDeps): SyncController {
-  const { app, secrets, load, save, registerEvent, statusBar, isSignedIn, syncBootstrap } = deps;
-  const echo = createEchoSuppress();
-  const gateway: VaultGateway = obsidianVaultGateway(app);
+export interface SyncOpts {
+  url: string;
+  token: string;
+}
 
-  let settings: AgentageMemorySettings = DEFAULT_SETTINGS;
-  let basicCreds: BasicCreds = DEFAULT_BASIC_CREDS;
-  let replication: ReplicationHandle | null = null;
-  let layoutReady = false;
-  // The signed-in cloud sync target + short-lived bearer from /api/sync/bootstrap.
-  // Null = use the local-dev Basic-creds path (settings.serverUrl + creds).
-  let bootstrap: SyncBootstrap | null = null;
+export interface SyncResult {
+  action: 'cloned' | 'seeded' | 'synced' | 'blocked';
+  committed: boolean;
+  pushed: boolean;
+  conflicted: string[];
+  message?: string;
+}
 
-  const persist = (): Promise<void> => save(settings);
-  // When signed in, replicate against the bootstrapped per-tenant target with a
-  // bearer token; otherwise the configured/local-dev host with Basic creds.
-  const creds = (): PushCreds =>
-    bootstrap
-      ? { serverUrl: bootstrap.syncUrl, dbName: bootstrap.dbName }
-      : { serverUrl: settings.serverUrl, dbName: settings.dbName };
-  const authProvider = (): AuthProvider =>
-    bootstrap
-      ? bearerAuthProvider(() => bootstrap?.token ?? null)
-      : basicAuthProvider(basicCreds.username, basicCreds.password);
-  const fetchImpl = (): ReturnType<typeof obsidianFetchForPouch> =>
-    obsidianFetchForPouch(authProvider());
-  const setStatus = (state: StatusState, detail?: string): void =>
-    renderStatus(statusBar, state, detail);
+// Empty `a` (mobile: dir = '' = vault root) must yield `b`, not `/b` — a leading
+// slash breaks vault.adapter paths (.git, the conflict note). Desktop dir is an
+// absolute path (truthy), so it is unaffected.
+const joinPath = (a: string, b: string): string => (a ? `${a.replace(/\/+$/, '')}/${b}` : b);
 
-  const loadSettings = async (): Promise<void> => {
-    const raw = ((await load()) as Record<string, unknown> | null) ?? {};
-    // Migrate any plaintext creds from a pre-secretStorage data.json into the
-    // secret store, seeding dev defaults when nothing is stored yet.
-    basicCreds = resolveBasicCreds(secrets, { username: raw.username, password: raw.password });
-    settings = Object.assign({}, DEFAULT_SETTINGS, stripLegacyCreds(raw));
-    // Persist the stripped data.json so the plaintext creds don't linger.
-    if ('username' in raw || 'password' in raw) await persist();
+export function createSyncController(deps: SyncControllerDeps) {
+  const ref = deps.ref ?? 'main';
+  const gitdir = deps.gitdir ?? joinPath(deps.dir, '.git');
+  const conflictNote = deps.conflictNote ?? 'Agentage Sync Conflicts.md';
+  const status = (s: SyncStatus, msg?: string) => deps.onStatus?.(s, msg);
+  let running = false;
+
+  // FsClient is a callback|promise union; the concrete fs we get (node fs / VaultFs)
+  // always has a promises API — narrow to the subset we use here.
+  const pfs = deps.fs as unknown as {
+    promises: {
+      stat(p: string): Promise<unknown>;
+      readdir(p: string): Promise<string[]>;
+      writeFile(p: string, data: string): Promise<void>;
+    };
   };
 
-  const seedVault = async (): Promise<void> => {
+  const ctxOf = (o: SyncOpts): RepoCtx => ({
+    dir: deps.dir,
+    gitdir,
+    url: o.url,
+    ref,
+    token: o.token,
+  });
+
+  const skip = (p: string): boolean =>
+    p === conflictNote || (deps.ignore?.some((i) => p === i || p.startsWith(i + '/')) ?? false);
+
+  async function hasGit(): Promise<boolean> {
     try {
-      await seedLocalReplica(getLocalDb(), gateway);
-    } catch (err) {
-      console.error('[Agentage Memory] seedVault failed:', describeErr(err));
+      await pfs.promises.stat(gitdir);
+      return true;
+    } catch {
+      return false;
     }
-  };
+  }
 
-  const applyPulled = async (id: string): Promise<void> => {
+  // Local branch head, or null when `main` is unborn (repo init'd, no commit yet).
+  async function localHead(ctx: RepoCtx): Promise<string | null> {
     try {
-      await applyPulledDoc(getLocalDb(), gateway, echo, id);
-    } catch (err) {
-      console.error('[Agentage Memory] applyPulledDoc failed', id, describeErr(err));
+      return await deps.client.resolveRef(ctx, ref);
+    } catch {
+      return null;
     }
-  };
+  }
 
-  const onSyncChange = (info: SyncChange): void => {
-    if (info.direction !== 'pull') return;
-    for (const doc of info.docs) {
-      void applyPulled(doc._id);
-    }
-  };
-
-  const stopReplication = (): void => {
-    if (replication) {
-      replication.cancel();
-      replication = null;
-    }
-  };
-
-  // Developer Policy: no unsolicited network on load. Replicate once the user
-  // has solicited it — a live cloud bootstrap (signed in), or a real CouchDB
-  // (non-default host) with creds. A fresh / signed-out install stays idle.
-  const shouldReplicate = (): boolean =>
-    bootstrap !== null ||
-    shouldStartReplication({
-      serverUrl: settings.serverUrl,
-      defaultUrl: DEFAULT_SETTINGS.serverUrl,
-      hasCreds: Boolean(basicCreds.username && basicCreds.password),
-      isSignedIn: isSignedIn(),
-    });
-
-  // Fetch (or refresh on expiry) the cloud sync target when signed in. No-op
-  // without a `syncBootstrap` dep (local-dev / e2e) or when signed out.
-  const ensureBootstrap = async (): Promise<void> => {
-    if (!syncBootstrap || !isSignedIn()) {
-      bootstrap = null;
-      return;
-    }
-    if (bootstrap && !isBootstrapExpired(bootstrap, Date.now())) return;
+  async function dirIsEmpty(): Promise<boolean> {
+    let entries: string[] = [];
     try {
-      bootstrap = await syncBootstrap();
-    } catch (err) {
-      console.error('[Agentage Memory] sync bootstrap failed:', describeErr(err));
-      bootstrap = null;
+      entries = await pfs.promises.readdir(deps.dir);
+    } catch {
+      return true;
     }
-  };
+    return entries.filter((e) => !e.startsWith('.')).length === 0;
+  }
 
-  const restartReplication = (): void => {
-    stopReplication();
-    if (!shouldReplicate()) {
-      setStatus('idle', 'Sign in to start sync');
-      return;
+  async function stageChanges(ctx: RepoCtx, conflicted: Set<string>): Promise<number> {
+    const matrix = await deps.client.statusMatrix(ctx);
+    let staged = 0;
+    for (const row of matrix) {
+      const [filepath, head, workdir] = row as [string, number, number, number];
+      if (skip(filepath) || conflicted.has(filepath)) continue;
+      if (workdir === 0 && head === 1) {
+        await deps.client.remove(ctx, filepath);
+        staged++;
+      } else if (workdir !== head) {
+        await deps.client.add(ctx, filepath);
+        staged++;
+      }
     }
-    const usedBootstrap = bootstrap;
-    try {
-      replication = startContinuousSync(creds(), fetchImpl(), {
-        onActive: () => setStatus('active'),
-        onPaused: (err) => {
-          if (err) console.warn('[Agentage Memory] paused with transient error:', describeErr(err));
-          setStatus('synced');
-        },
-        onChange: onSyncChange,
-        onError: (err) => {
-          console.error('[Agentage Memory] replication terminated:', describeErr(err));
-          setStatus('error');
-          // A bearer token may have expired mid-stream — re-bootstrap once and
-          // restart. Guarded by the expiry check so persistent errors don't loop.
-          if (usedBootstrap && isBootstrapExpired(usedBootstrap, Date.now())) {
-            void refreshSync();
-          }
-        },
-      });
-    } catch (err) {
-      console.error('[Agentage Memory] startReplication failed:', describeErr(err));
-      setStatus('error');
+    return staged;
+  }
+
+  async function writeConflictNote(conflicted: string[]): Promise<void> {
+    const body =
+      `---\nconflict: true\nupdated: ${deps.now()}\n---\n\n` +
+      `# Sync conflicts\n\nThese files have unresolved conflict markers (\`<<<<<<<\`). ` +
+      `Open each, keep the right content, remove the markers, then sync again.\n\n` +
+      conflicted.map((f) => `- [[${f}]]`).join('\n') +
+      '\n';
+    await pfs.promises.writeFile(joinPath(deps.dir, conflictNote), body);
+  }
+
+  async function run(o: SyncOpts): Promise<SyncResult> {
+    status('syncing');
+    const ctx = ctxOf(o);
+
+    if (!(await hasGit())) {
+      if (await dirIsEmpty()) {
+        await deps.client.clone(ctx);
+        status('idle');
+        return { action: 'cloned', committed: false, pushed: false, conflicted: [] };
+      }
+      // non-empty worktree, no repo → init + adopt-guard
+      await deps.client.init(ctx);
+      await deps.client.addRemote(ctx);
+      const remote = await deps.client.remoteOid(ctx);
+      if (remote !== null) {
+        const message =
+          'Remote already has notes. First sync into a non-empty vault is not supported yet — start from an empty vault or an empty remote.';
+        status('error', message);
+        return { action: 'blocked', committed: false, pushed: false, conflicted: [], message };
+      }
+      const staged = await stageChanges(ctx, new Set());
+      if (staged > 0) await deps.client.commit(ctx, 'Import local notes');
+      await deps.client.push(ctx);
+      status('idle');
+      return { action: 'seeded', committed: staged > 0, pushed: true, conflicted: [] };
     }
-  };
 
-  // Refresh the cloud target (if any) then (re)start replication. This is the
-  // entry point after sign-in/out and on load.
-  const refreshSync = async (): Promise<void> => {
-    await ensureBootstrap();
-    restartReplication();
-  };
-
-  const pushCurrentNote = (): Promise<void> => pushActiveNote(app, creds(), fetchImpl());
-
-  const start = async (): Promise<void> => {
-    await loadSettings();
-    setStatus('idle');
-    registerVaultWatchers({ app, echo, registerEvent, isLayoutReady: () => layoutReady });
-    await refreshSync();
-    app.workspace.onLayoutReady(() => {
-      layoutReady = true;
-      void seedVault();
-    });
-  };
-
-  const stop = async (): Promise<void> => {
-    stopReplication();
-    try {
-      await destroyLocalDb();
-    } catch (err) {
-      console.warn('[Agentage Memory] destroyLocalDb', describeErr(err));
+    // existing local repo. Ask the SERVER whether the target memory has commits (not the
+    // local origin/<ref>, which is stale after switching vaults): a just-created memory has
+    // no `main`, so there is nothing to pull/merge — seed it (commit local + push) instead
+    // of pulling, which would throw "could not get main".
+    const remoteHasHistory = await deps.client.remoteHasRef(ctx);
+    if (!remoteHasHistory) {
+      const staged = await stageChanges(ctx, new Set());
+      if (staged > 0) await deps.client.commit(ctx, `Sync ${deps.now()}`);
+      const pushed = (await localHead(ctx)) !== null; // nothing to push if local is empty too
+      if (pushed) await deps.client.push(ctx);
+      status('idle');
+      return { action: 'seeded', committed: staged > 0, pushed, conflicted: [] };
     }
-  };
 
-  const setUsername = (value: string): void => {
-    basicCreds = { ...basicCreds, username: value.trim() };
-    secrets.set(USERNAME_SECRET, basicCreds.username);
-    restartReplication();
-  };
+    // remote has history: backup HEAD → COMMIT local first (commit-before-pull, so a merge
+    // never has to overwrite uncommitted work) → pull(merge) → surface conflicts → push.
+    // The backup is a best-effort safety net — never let it block the sync.
+    if (await localHead(ctx)) {
+      try {
+        await snapshotBackupRef(deps.fs, { dir: deps.dir, gitdir, ref }, deps.now());
+      } catch (e) {
+        console.warn('[Agentage Sync] backup ref skipped:', (e as Error).message);
+      }
+    }
+    const staged = await stageChanges(ctx, new Set());
+    if (staged > 0) await deps.client.commit(ctx, `Sync ${deps.now()}`);
 
-  const setPassword = (value: string): void => {
-    basicCreds = { ...basicCreds, password: value };
-    secrets.set(PASSWORD_SECRET, value);
-    restartReplication();
-  };
+    const { conflicted } = await deps.client.pull(ctx);
+    if (conflicted.length > 0) {
+      await writeConflictNote(conflicted);
+      status('conflict', `${conflicted.length} file(s) need resolution`);
+      return { action: 'synced', committed: staged > 0, pushed: false, conflicted };
+    }
 
-  const setServerUrl = (value: string): void => {
-    settings = { ...settings, serverUrl: normalizeServerUrl(value) };
-    void persist();
-    restartReplication();
-  };
-
-  const setDbName = (value: string): void => {
-    settings = { ...settings, dbName: value.trim() || DEFAULT_DB_NAME };
-    void persist();
-    restartReplication();
-  };
-
-  // Auth config feeds the OAuth flow, not replication — persist without restart.
-  const setAuthBase = (value: string): void => {
-    settings = { ...settings, authBase: normalizeServerUrl(value) };
-    void persist();
-  };
-
-  const setAnonKey = (value: string): void => {
-    settings = { ...settings, anonKey: value.trim() };
-    void persist();
-  };
+    await deps.client.push(ctx);
+    status('idle');
+    return { action: 'synced', committed: staged > 0, pushed: true, conflicted: [] };
+  }
 
   return {
-    start,
-    stop,
-    // Sign-in/out changes the cloud target, so refresh the bootstrap before
-    // restarting (not just restartReplication, which reuses the cached target).
-    refreshReplication: () => void refreshSync(),
-    pushCurrentNote,
-    getSettings: () => settings,
-    getBasicCreds: () => basicCreds,
-    setUsername,
-    setPassword,
-    setServerUrl,
-    setDbName,
-    setAuthBase,
-    setAnonKey,
+    isRunning: () => running,
+    async syncNow(o: SyncOpts): Promise<SyncResult> {
+      if (running) throw new Error('sync already running');
+      running = true;
+      try {
+        return await run(o);
+      } catch (e) {
+        status('error', (e as Error).message);
+        throw e;
+      } finally {
+        running = false;
+      }
+    },
   };
 }
+
+export type SyncController = ReturnType<typeof createSyncController>;

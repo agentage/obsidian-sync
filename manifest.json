@@ -1,6 +1,6 @@
 {
 	"id": "agentage-memory",
-	"name": "Agentage Memory",
+	"name": "Agentage Sync",
 	"version": "0.1.1",
 	"minAppVersion": "1.11.4",
 	"description": "Sync your notes to your private Agentage Memory so Claude, ChatGPT, Cursor and any MCP client read and write the same Markdown you own. Requires an Agentage account.",

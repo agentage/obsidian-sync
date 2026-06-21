@@ -20,11 +20,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "playwright test",
     "clean": "rm -rf main.js *.map coverage",
-    "couchdb:up": "docker compose up -d",
-    "couchdb:down": "docker compose down",
-    "couchdb:reset": "docker compose down -v",
     "version": "node version-bump.mjs && git add manifest.json versions.json",
     "check:hosts": "node scripts/check-hosts.mjs",
     "check:docs": "node scripts/check-docs.mjs",
@@ -41,10 +37,8 @@
   "author": "agentage",
   "license": "SEE LICENSE IN LICENSE",
   "devDependencies": {
-    "@playwright/test": "1.61.0",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.0.0",
-    "@types/pouchdb": "6.4.2",
-    "@types/pouchdb-browser": "6.1.5",
     "@typescript-eslint/eslint-plugin": "^8.61.1",
     "@typescript-eslint/parser": "^8.61.0",
     "@vitest/coverage-v8": "^4.1.9",
@@ -55,14 +49,14 @@
     "eslint-plugin-obsidianmd": "0.3.0",
     "eslint-plugin-prettier": "^5.5.6",
     "obsidian": "latest",
-    "pouchdb": "9.0.0",
-    "pouchdb-adapter-memory": "9.0.0",
     "prettier": "^3.8.4",
     "tslib": "^2.8.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.7"
   },
   "dependencies": {
-    "pouchdb-browser": "9.0.0"
+    "diff3": "^0.0.4",
+    "isomorphic-git": "^1.38.5",
+    "js-yaml": "^4.1.0"
   }
 }
