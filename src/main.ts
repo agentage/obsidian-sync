@@ -72,6 +72,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   isDesktop = Platform.isDesktopApp;
   private statusBar?: HTMLElement;
   private statusDot?: HTMLElement;
+  private statusEl?: HTMLElement; // optional label (e.g. "Choose memory"); empty otherwise
   private settingTab?: AgentageMemorySettingTab;
   private auth!: AuthFlow;
   private resolver!: HostResolver;
@@ -101,6 +102,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     sb.addClass('ams-statusbar', 'mod-clickable');
     // A REAL child element — an empty status-bar item (only a ::before) is hidden by Obsidian.
     this.statusDot = sb.createSpan({ cls: 'ams-sb-dot' });
+    this.statusEl = sb.createSpan({ cls: 'ams-sb-text' });
     this.registerDomEvent(sb, 'click', (evt) => this.showStatusMenu(evt));
     this.refreshStatus();
 
@@ -229,27 +231,45 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     this.refreshStatus();
   }
 
-  /** Status bar: colored dot only (green ready / red error / gray signed-out) + tooltip. */
+  /** Status bar dot: gray (signed out) / amber (signed in, no memory chosen) /
+   * green (ready or syncing) / red (error). Green only means "ready to sync". */
   private refreshStatus(): void {
     if (!this.statusBar || !this.statusDot) return;
     const signedIn = !!this.auth && this.auth.isSignedIn();
     const erroring = this.syncState === 'error' || this.syncState === 'conflict';
-    const tone = !signedIn ? 'gray' : erroring ? 'red' : 'green';
-    this.statusDot.removeClass('is-green', 'is-red', 'is-gray');
+    const hasMemory = !!this.settings.vault.trim();
+    let tone: 'gray' | 'amber' | 'green' | 'red';
+    let tip: string;
+    if (!signedIn) {
+      tone = 'gray';
+      tip = 'Agentage Sync — not signed in. Click to sign in.';
+    } else if (erroring) {
+      tone = 'red';
+      tip = `Agentage Sync — ${this.syncState}${this.syncMsg ? `: ${this.syncMsg}` : ''}. Click for options.`;
+    } else if (this.syncState === 'syncing') {
+      tone = 'green';
+      tip = 'Agentage Sync — syncing… Click for options.';
+    } else if (!hasMemory) {
+      tone = 'amber';
+      tip = 'Agentage Sync — signed in. Choose a memory to sync into. Click to choose.';
+    } else {
+      tone = 'green';
+      tip = `Agentage Sync — ready (${this.settings.vault}). Click for options.`;
+    }
+    this.statusDot.removeClass('is-gray', 'is-amber', 'is-green', 'is-red');
     this.statusDot.addClass(`is-${tone}`);
-    const tip = !signedIn
-      ? 'Agentage Sync — not signed in. Click to sign in.'
-      : erroring
-        ? `Agentage Sync — ${this.syncState}${this.syncMsg ? `: ${this.syncMsg}` : ''}. Click for options.`
-        : this.syncState === 'syncing'
-          ? 'Agentage Sync — syncing… Click for options.'
-          : 'Agentage Sync — signed in and ready. Click for options.';
+    this.statusEl?.setText(tone === 'amber' ? 'Choose memory' : ''); // label only when a choice is needed
     this.statusBar.setAttribute('aria-label', tip);
     this.statusBar.setAttribute('title', tip);
   }
 
-  /** Click the status bar → context menu (sign in, or sync / dashboard / settings). */
+  /** Click the status bar → context menu (sign in, or sync / dashboard / settings).
+   * Signed in but no memory chosen → go straight to the chooser (the only next step). */
   private showStatusMenu(evt: MouseEvent): void {
+    if (this.isSignedIn() && !this.settings.vault.trim()) {
+      this.chooseMemory();
+      return;
+    }
     const menu = new Menu();
     if (this.isSignedIn()) {
       menu.addItem((i) =>
@@ -432,21 +452,21 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
 
   async syncNow(): Promise<{ ok: boolean; message: string }> {
     const token = await this.auth.getValidToken();
-    if (!token) return { ok: false, message: 'Sign in to Agentage first (Connect).' };
+    if (!token) return { ok: false, message: 'Sign in to Agentage first.' };
     let remote = this.settings.origin.remote.trim();
-    let syncedVault = this.vaultNameOf();
-    // Managed remote: resolve the per-user git endpoint from the live sync host.
-    if (!remote || remote === 'agentage') {
+    const managed = !remote || remote === 'agentage';
+    const chosen = normalizeVaultName(this.settings.vault);
+    // In managed mode the user must pick a memory explicitly — never guess which one to
+    // write to. No selection → open the chooser instead of syncing.
+    if (managed && !chosen) {
+      this.chooseMemory();
+      return { ok: false, message: 'Choose a memory to sync into first.' };
+    }
+    let syncedVault = chosen || this.vaultNameOf();
+    if (managed) {
       try {
         const res = await this.resolver.resolve(token);
-        const chosen = normalizeVaultName(this.settings.vault);
-        // Use the memory the user picked/created in settings; else the server's first one.
-        if (chosen) {
-          syncedVault = chosen;
-        } else {
-          const want = this.vaultNameOf();
-          syncedVault = res.vaults.includes(want) ? want : (res.vaults[0] ?? want);
-        }
+        syncedVault = chosen;
         remote = buildRepoUrl(res.gitEndpoint, syncedVault);
       } catch (e) {
         return {
