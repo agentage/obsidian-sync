@@ -75,7 +75,7 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
         .addButton((b) =>
           b
             .setCta()
-            .setButtonText('Start sync with agentage')
+            .setButtonText('Sign in to Agentage')
             .onClick(() => this.host.openSignIn())
         );
     }
@@ -95,21 +95,25 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
         );
     }
 
-    // ---- AI access over MCP (on by default) ----
-    new Setting(containerEl)
-      .setName('Expose remote MCP')
-      .setDesc('Let AI apps anywhere — Claude, ChatGPT, Cursor — read and write your notes.')
-      .addToggle((t) =>
-        t.setValue(s.mcp.includes('remote')).onChange((v) => this.setScope('remote', v))
-      );
+    // ---- AI access over MCP (signed-in only; on by default) ----
+    if (this.host.isSignedIn()) {
+      new Setting(containerEl)
+        .setName('Expose remote MCP')
+        .setDesc('Let AI apps anywhere — Claude, ChatGPT, Cursor — read and write your notes.')
+        .addToggle((t) =>
+          t.setValue(s.mcp.includes('remote')).onChange((v) => this.setScope('remote', v))
+        );
+    }
 
     this.status = containerEl.createDiv({ cls: 'ams-status' });
 
-    // ---- How to connect AI apps over MCP ----
-    const docs = containerEl.createEl('p', { cls: 'ams-hint' });
-    docs.appendText('Connect Claude, ChatGPT, Cursor and more — see ');
-    docs.createEl('a', { text: 'how to connect', href: CONNECT_URL });
-    docs.appendText('.');
+    // ---- How to connect AI apps over MCP (only meaningful once signed in) ----
+    if (this.host.isSignedIn()) {
+      const docs = containerEl.createEl('p', { cls: 'ams-hint' });
+      docs.appendText('Connect Claude, ChatGPT, Cursor and more — see ');
+      docs.createEl('a', { text: 'how to connect', href: CONNECT_URL });
+      docs.appendText('.');
+    }
   }
 
   /** Add/remove an MCP scope, then persist. */

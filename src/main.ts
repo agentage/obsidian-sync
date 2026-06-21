@@ -228,6 +228,11 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     if (!this.isDesktop) return;
     const state = await readAuthJsonState(this.settings.configDir);
     if (!state?.tokens?.accessToken || !state.tokens.refreshToken) return;
+    // Never replay a token minted for a different host (e.g. a dev auth.json against prod).
+    if (state.siteFqdn && state.siteFqdn !== SITE_FQDN) {
+      console.debug('[Agentage Sync] auth.json is for a different host; skipping hydration');
+      return;
+    }
     if (state.clientId) this.secretCache.set(CLIENT_ID_SECRET, state.clientId);
     this.secretCache.set(ACCESS_TOKEN_SECRET, state.tokens.accessToken);
     this.secretCache.set(REFRESH_TOKEN_SECRET, state.tokens.refreshToken);
@@ -268,7 +273,9 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     }
     this.statusDot.removeClass('is-gray', 'is-amber', 'is-green', 'is-red');
     this.statusDot.addClass(`is-${tone}`);
-    this.statusEl?.setText(tone === 'amber' ? 'Choose Memory' : ''); // label only when no memory is selected
+    // A visible label for the two states that need a user action (not just a tooltip).
+    const label = tone === 'gray' ? 'Sign in' : tone === 'amber' ? 'Choose Memory' : '';
+    this.statusEl?.setText(label);
     this.statusBar.setAttribute('aria-label', tip);
     this.statusBar.setAttribute('title', tip);
   }
@@ -490,7 +497,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     // write to. No selection → open the chooser instead of syncing.
     if (managed && !chosen) {
       this.chooseMemory();
-      return { ok: false, message: 'Choose a memory to sync into first.' };
+      return { ok: false, message: 'Opening the memory picker. Choose one to sync into.' };
     }
     let syncedVault = chosen || this.vaultNameOf();
     if (managed) {
