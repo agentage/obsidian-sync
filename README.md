@@ -1,6 +1,6 @@
 # Agentage Sync
 
-> **One memory. Every AI. Owned by you.**
+> **Expose your vault as MCP - any AI agent can read and write your notes.**
 
 [![Release](https://img.shields.io/github/v/release/agentage/obsidian-sync?sort=semver&label=release)](https://github.com/agentage/obsidian-sync/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
