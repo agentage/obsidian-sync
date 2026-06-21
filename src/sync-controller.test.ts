@@ -8,7 +8,7 @@ import nodeHttp from 'isomorphic-git/http/node';
 import { startGitServer, type GitServer } from './git/git-test-server';
 import { createGitClient } from './git/git-client';
 import { mergeNote } from './git/merge-note';
-import { createSyncController } from './sync-controller';
+import { createSyncController, type SyncStatus } from './sync-controller';
 
 const mergeDriver: MergeDriverCallback = ({ contents }) => {
   const [b, o, t] = contents;
@@ -121,5 +121,44 @@ describe('sync-controller (R10/R12 lifecycle + R15 conflict surfacing)', () => {
     const [r1, r2] = await Promise.allSettled([ctrl.syncNow(opts()), ctrl.syncNow(opts())]);
     const statuses = [r1.status, r2.status].sort();
     expect(statuses).toEqual(['fulfilled', 'rejected']);
+  });
+
+  it('blocks the first sync of a non-empty vault into a remote that already has notes (no overwrite)', async () => {
+    const A = dir('A');
+    fs.writeFileSync(path.join(A, 'note.md'), '# remote\n');
+    await controllerFor(A).syncNow(opts()); // seed app.git → the remote now has notes
+
+    const B = dir('B'); // non-empty worktree, no .git, same remote
+    fs.writeFileSync(path.join(B, 'local.md'), '# local only\n');
+    const seen: SyncStatus[] = [];
+    const ctrl = createSyncController({
+      client,
+      fs,
+      dir: B,
+      now: () => '2026-06-21T00:00:00.000Z',
+      onStatus: (s) => seen.push(s),
+    });
+
+    const res = await ctrl.syncNow(opts());
+    expect(res.action).toBe('blocked');
+    expect(res.pushed).toBe(false);
+    expect(res.message).toMatch(/Remote already has notes/);
+    expect(seen).toContain('error');
+    // the guard must not clone/merge over the local file
+    expect(fs.readFileSync(path.join(B, 'local.md'), 'utf8')).toContain('# local only');
+  });
+
+  it('sets an error status (and rethrows) when the remote is unreachable', async () => {
+    const D = dir('D'); // empty → clone path
+    const seen: SyncStatus[] = [];
+    const ctrl = createSyncController({
+      client,
+      fs,
+      dir: D,
+      now: () => '2026-06-21T00:00:00.000Z',
+      onStatus: (s) => seen.push(s),
+    });
+    await expect(ctrl.syncNow(opts(srv.url('missing.git')))).rejects.toThrow();
+    expect(seen).toContain('error');
   });
 });
