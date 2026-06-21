@@ -37,7 +37,7 @@ export interface AgentageMemorySettings {
 }
 
 export const MCP_ENDPOINT = 'https://memory.agentage.io/mcp';
-export const DOCS_URL = 'https://agentage.io/docs';
+export const CONNECT_URL = 'https://agentage.io/connect';
 
 /** Per-memory metadata from GET /vaults (mirrors the sync server's VaultInfo). */
 export interface VaultInfo {

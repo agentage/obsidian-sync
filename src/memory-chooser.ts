@@ -87,7 +87,7 @@ class MemoryModal extends Modal {
     for (const v of vaults) {
       const isCur = v.name === cur;
       const meta = describeVault(v);
-      new Setting(this.listEl)
+      const row = new Setting(this.listEl)
         .setName(v.name)
         .setDesc(isCur ? `current · ${meta}` : meta)
         .addButton((b) =>
@@ -98,8 +98,10 @@ class MemoryModal extends Modal {
               await this.host.selectVault(v.name);
               this.close();
             })
-        )
-        .addButton((b) =>
+        );
+      // Sync now only for the memory in use; switch to another with Use first.
+      if (isCur) {
+        row.addButton((b) =>
           b
             .setCta()
             .setButtonText('Sync now')
@@ -109,6 +111,7 @@ class MemoryModal extends Modal {
               this.close();
             })
         );
+      }
     }
   }
 

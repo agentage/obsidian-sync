@@ -1,5 +1,5 @@
-import { type App, Notice, PluginSettingTab, Setting, debounce } from 'obsidian';
-import { DOCS_URL, MCP_ENDPOINT, validateSettings, type AgentageMemorySettings } from './settings';
+import { type App, PluginSettingTab, Setting, debounce } from 'obsidian';
+import { CONNECT_URL, validateSettings, type AgentageMemorySettings } from './settings';
 import type { ApplyResult } from './vaults-config';
 
 // What the settings page needs from the plugin (avoids a circular import on main).
@@ -105,28 +105,10 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
 
     this.status = containerEl.createDiv({ cls: 'ams-status' });
 
-    // ---- Always available: the address to share + the config file ----
-    new Setting(containerEl)
-      .setName('MCP address')
-      .setDesc(
-        'Share this with your AI apps. They can read and write once you turn on Expose MCP above.'
-      )
-      .addText((t) => {
-        t.setValue(MCP_ENDPOINT).setDisabled(true);
-        t.inputEl.addClass('ams-mono');
-        return t;
-      })
-      .addButton((b) =>
-        b.setButtonText('Copy').onClick(async () => {
-          await navigator.clipboard.writeText(MCP_ENDPOINT);
-          new Notice('MCP address copied');
-        })
-      );
-
-    // ---- Docs link for connecting AI apps over MCP ----
+    // ---- How to connect AI apps over MCP ----
     const docs = containerEl.createEl('p', { cls: 'ams-hint' });
-    docs.appendText('Connecting Claude, ChatGPT, Cursor and more — see the ');
-    docs.createEl('a', { text: 'documentation', href: DOCS_URL });
+    docs.appendText('Connect Claude, ChatGPT, Cursor and more — see ');
+    docs.createEl('a', { text: 'how to connect', href: CONNECT_URL });
     docs.appendText('.');
   }
 
