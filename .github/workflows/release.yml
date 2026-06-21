@@ -31,6 +31,10 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # Provenance attestation for the published release assets (main.js, styles.css,
+  # manifest.json) - lets users cryptographically verify they were built here.
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -152,6 +156,15 @@ jobs:
         if: steps.ver.outputs.release == 'true'
         run: node scripts/check-bundle.mjs
 
+      - name: Attest build provenance
+        if: steps.ver.outputs.release == 'true'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            main.js
+            styles.css
+            manifest.json
+
       - name: Create GitHub Release
         if: steps.ver.outputs.release == 'true'
         uses: softprops/action-gh-release@v3
@@ -165,7 +178,7 @@ jobs:
 
             ### Install (manual)
             Download `main.js`, `manifest.json`, and `styles.css` below into
-            `<your-vault>/.obsidian/plugins/agentage-memory/`, then enable
+            your vault's `.obsidian/plugins/agentage-memory/` folder, then enable
             **Agentage Sync** under Settings → Community plugins.
 
             ### Install (BRAT)
