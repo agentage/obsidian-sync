@@ -7,7 +7,7 @@ Guidance for Claude Code when working in this repository.
 **Agentage Sync — Obsidian plugin.** A configuration page + bidirectional **git** sync between an Obsidian vault and the user's agentage Memory, plus OAuth sign-in. AI clients reach the same memory over MCP at `memory.agentage.io`.
 
 - **Plugin id:** `agentage-memory` (locked — the install/auto-update key) · **Display name:** `Agentage Sync`
-- **Repo:** `agentage/obsidian-memory` · **Default branch:** `master`
+- **Repo:** `agentage/obsidian-sync` · **Default branch:** `master`
 - The plugin is a **git client** (vendored `isomorphic-git` over Obsidian `requestUrl`) talking to the agentage git server at `sync.agentage.io`; the store is one bare git repo per vault, server-authoritative. Plaintext markdown end to end (no client E2E) so the cloud can `git grep` it.
 
 ## Architecture (`src/`)

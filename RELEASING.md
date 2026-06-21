@@ -41,7 +41,7 @@ Three ways in:
    `community-plugins.json`:
    ```json
    { "id": "agentage-memory", "name": "Agentage Sync", "author": "agentage",
-     "description": "...", "repo": "agentage/obsidian-memory" }
+     "description": "...", "repo": "agentage/obsidian-sync" }
    ```
 3. Open the PR; pass the automated scan (mirrored locally by `npm run lint` via
    `eslint-plugin-obsidianmd`, plus `npm run check:hosts` / `check:docs` /
