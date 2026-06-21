@@ -260,12 +260,6 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       );
       menu.addItem((i) =>
         i
-          .setTitle('Choose memory…')
-          .setIcon('library')
-          .onClick(() => this.chooseMemory())
-      );
-      menu.addItem((i) =>
-        i
           .setTitle('Open dashboard')
           .setIcon('layout-dashboard')
           .onClick(() => this.openDashboard())
@@ -385,6 +379,15 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
 
   currentVault(): string {
     return this.settings.vault;
+  }
+
+  /** Select a memory and immediately sync it (the chooser's "Sync now" per row). */
+  async syncVault(name: string): Promise<void> {
+    this.settings.vault = name;
+    await this.saveSettings();
+    this.onAuthChanged();
+    const r = await this.syncNow();
+    new Notice(`Agentage Sync: ${r.message}`);
   }
 
   /** Open the memory chooser popup (pick existing or create new). */

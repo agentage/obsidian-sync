@@ -7,6 +7,7 @@ export interface MemoryChooserHost {
   createVault(name: string): Promise<{ ok: boolean; vault?: string; error?: string }>;
   defaultVaultName(): string;
   selectVault(name: string): Promise<void>;
+  syncVault(name: string): Promise<void>; // select + sync now
   currentVault(): string;
 }
 
@@ -95,6 +96,16 @@ class MemoryModal extends Modal {
             .setDisabled(isCur)
             .onClick(async () => {
               await this.host.selectVault(v.name);
+              this.close();
+            })
+        )
+        .addButton((b) =>
+          b
+            .setCta()
+            .setButtonText('Sync now')
+            .onClick(async () => {
+              b.setDisabled(true).setButtonText('Syncing…');
+              await this.host.syncVault(v.name);
               this.close();
             })
         );
