@@ -27,6 +27,7 @@ import type { HttpPost } from './auth/oauth';
 import type { GetJson } from './auth/discovery';
 import { HostResolver, buildRepoUrl } from './resolve-host';
 import { openMemoryChooser } from './memory-chooser';
+import { openActionsMenu, type PluginAction } from './actions-menu';
 
 // Single-host: every origin derives from SITE_FQDN. Defaults to prod; the
 // AGENTAGE_SITE_FQDN env var (desktop only, same pattern as AGENTAGE_CONFIG_DIR)
@@ -100,9 +101,10 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       void this.auth.handleCallback(params).then(() => this.onAuthChanged());
     });
 
-    // Ribbon shows on mobile (the status bar does NOT), so it opens the same menu —
-    // it's the only way to reach Sync now / Choose memory / dashboard on mobile.
-    this.addRibbonIcon('refresh-cw', 'Agentage Sync', (evt) => this.showStatusMenu(evt));
+    // Ribbon shows on mobile (the status bar does NOT). It opens a modal action-picker
+    // (not a Menu — those don't render from a tap on mobile), so Sync now / Choose memory
+    // / dashboard are reachable on phones.
+    this.addRibbonIcon('refresh-cw', 'Agentage Sync', () => this.openActions());
     const sb = this.addStatusBarItem();
     this.statusBar = sb;
     sb.addClass('ams-statusbar', 'mod-clickable');
@@ -122,6 +124,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       name: 'Choose memory',
       callback: () => this.chooseMemory(),
     });
+    this.addCommand({ id: 'open-menu', name: 'Open menu', callback: () => this.openActions() });
   }
 
   private buildAuth(): void {
@@ -269,48 +272,49 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     this.statusBar.setAttribute('title', tip);
   }
 
-  /** Click the status bar → context menu (sign in, or sync / dashboard / settings).
-   * Signed in but no memory chosen → go straight to the chooser (the only next step). */
+  private needsMemory(): boolean {
+    return this.isSignedIn() && !this.settings.vault.trim();
+  }
+
+  /** The single source of truth for the plugin's quick actions, by state. */
+  private actions(): PluginAction[] {
+    if (!this.isSignedIn())
+      return [
+        { title: 'Sign in to Agentage', icon: 'log-in', run: () => this.openSignIn() },
+        { title: 'Open settings', icon: 'settings', run: () => this.openSettings() },
+      ];
+    return [
+      {
+        title: 'Sync now',
+        icon: 'refresh-cw',
+        run: () => void this.syncNow().then((r) => new Notice(`Agentage Sync: ${r.message}`)),
+      },
+      { title: 'Choose memory…', icon: 'library', run: () => this.chooseMemory() },
+      { title: 'Open dashboard', icon: 'layout-dashboard', run: () => this.openDashboard() },
+      { title: 'Open settings', icon: 'settings', run: () => this.openSettings() },
+      { title: 'Disconnect', icon: 'log-out', run: () => void this.disconnect() },
+    ];
+  }
+
+  /** Desktop status-bar dot → a context Menu at the cursor. */
   private showStatusMenu(evt: MouseEvent): void {
-    if (this.isSignedIn() && !this.settings.vault.trim()) {
-      this.chooseMemory();
-      return;
-    }
+    if (this.needsMemory()) return this.chooseMemory();
     const menu = new Menu();
-    if (this.isSignedIn()) {
+    for (const a of this.actions())
       menu.addItem((i) =>
         i
-          .setTitle('Sync now')
-          .setIcon('refresh-cw')
-          .onClick(() => void this.syncNow().then((r) => new Notice(`Agentage Sync: ${r.message}`)))
+          .setTitle(a.title)
+          .setIcon(a.icon ?? 'circle')
+          .onClick(a.run)
       );
-      menu.addItem((i) =>
-        i
-          .setTitle('Open dashboard')
-          .setIcon('layout-dashboard')
-          .onClick(() => this.openDashboard())
-      );
-      menu.addItem((i) =>
-        i
-          .setTitle('Open settings')
-          .setIcon('settings')
-          .onClick(() => this.openSettings())
-      );
-    } else {
-      menu.addItem((i) =>
-        i
-          .setTitle('Sign in to Agentage')
-          .setIcon('log-in')
-          .onClick(() => this.openSignIn())
-      );
-      menu.addItem((i) =>
-        i
-          .setTitle('Open settings')
-          .setIcon('settings')
-          .onClick(() => this.openSettings())
-      );
-    }
     menu.showAtMouseEvent(evt);
+  }
+
+  /** Ribbon + command → a modal action-picker. Works on mobile (no status bar there, and
+   * Menu.showAtMouseEvent does not render from a tap); the ribbon is the mobile entry. */
+  private openActions(): void {
+    if (this.needsMemory()) return this.chooseMemory();
+    openActionsMenu(this.app, this.actions());
   }
 
   private openSettings(): void {
