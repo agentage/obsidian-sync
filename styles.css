@@ -89,10 +89,12 @@
   color: var(--text-muted);
 }
 
-/* Status bar = a single colored dot (no text/icon). Tone set on .ams-sb-dot. */
+/* Status bar = a colored dot + an optional label (shown only when action is needed,
+   e.g. "Choose memory"). Tone set on .ams-sb-dot. */
 .ams-statusbar {
   display: inline-flex;
   align-items: center;
+  gap: 5px;
   cursor: pointer;
 }
 
@@ -111,6 +113,17 @@
 .ams-sb-dot.is-red {
   background: var(--color-red, #e05252);
 }
+.ams-sb-dot.is-amber {
+  background: var(--color-orange, #e0a030);
+}
 .ams-sb-dot.is-gray {
   background: var(--text-muted);
+}
+
+.ams-sb-text {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+.ams-sb-text:empty {
+  display: none;
 }
