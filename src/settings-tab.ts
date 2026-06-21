@@ -1,5 +1,5 @@
 import { type App, Notice, PluginSettingTab, Setting, debounce } from 'obsidian';
-import { MCP_ENDPOINT, validateSettings, type AgentageMemorySettings } from './settings';
+import { DOCS_URL, MCP_ENDPOINT, validateSettings, type AgentageMemorySettings } from './settings';
 import type { ApplyResult } from './vaults-config';
 
 // What the settings page needs from the plugin (avoids a circular import on main).
@@ -122,6 +122,12 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
           new Notice('MCP address copied');
         })
       );
+
+    // ---- Docs link for connecting AI apps over MCP ----
+    const docs = containerEl.createEl('p', { cls: 'ams-hint' });
+    docs.appendText('Connecting Claude, ChatGPT, Cursor and more — see the ');
+    docs.createEl('a', { text: 'documentation', href: DOCS_URL });
+    docs.appendText('.');
   }
 
   /** Add/remove an MCP scope, then persist. */

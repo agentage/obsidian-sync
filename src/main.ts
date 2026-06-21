@@ -1,6 +1,11 @@
 import { FileSystemAdapter, Menu, Notice, Platform, Plugin, requestUrl } from 'obsidian';
 import type { FsClient, MergeDriverCallback } from 'isomorphic-git';
-import { type AgentageMemorySettings, DEFAULT_SETTINGS, normalizeVaultName } from './settings';
+import {
+  type AgentageMemorySettings,
+  type VaultInfo,
+  DEFAULT_SETTINGS,
+  normalizeVaultName,
+} from './settings';
 import { AgentageMemorySettingTab, type SettingsHost } from './settings-tab';
 import { applyVaultsConfig, type ApplyResult } from './vaults-config';
 import { createGitClient } from './git/git-client';
@@ -41,6 +46,23 @@ const safeJson = (text: string): unknown => {
   } catch {
     return null;
   }
+};
+
+// GET /vaults items are objects ({name,files,…}); tolerate plain strings from an older
+// server that returns just names.
+const parseVaultInfo = (v: unknown): VaultInfo | null => {
+  if (typeof v === 'string') return { name: v, files: 0, folders: 0, updated: null, empty: false };
+  if (v && typeof v === 'object' && typeof (v as { name?: unknown }).name === 'string') {
+    const o = v as Record<string, unknown>;
+    return {
+      name: o.name as string,
+      files: Number(o.files) || 0,
+      folders: Number(o.folders) || 0,
+      updated: typeof o.updated === 'string' ? o.updated : null,
+      empty: o.empty === true,
+    };
+  }
+  return null;
 };
 
 // Agentage Sync plugin. Config page (writes ~/.agentage/vaults.json) + OAuth sign-in
@@ -300,12 +322,22 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   }
 
   // --- memory selection (SettingsHost) ---
-  /** Existing server memories for this account (readdir-derived, via the sync host). */
-  async listVaults(): Promise<string[]> {
+  /** Existing server memories + their info (files/folders/updated) via GET /vaults. */
+  async listVaults(): Promise<VaultInfo[]> {
     const token = await this.auth.getValidToken();
     if (!token) return [];
     try {
-      return (await this.resolver.resolve(token)).vaults;
+      const r = await requestUrl({
+        url: `${SYNC_ORIGIN}/vaults`,
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+        throw: false,
+      });
+      if (r.status < 200 || r.status >= 300) return [];
+      const raw = (safeJson(r.text) as { vaults?: unknown })?.vaults;
+      return Array.isArray(raw)
+        ? raw.map(parseVaultInfo).filter((v): v is VaultInfo => v !== null)
+        : [];
     } catch {
       return [];
     }

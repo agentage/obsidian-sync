@@ -37,6 +37,16 @@ export interface AgentageMemorySettings {
 }
 
 export const MCP_ENDPOINT = 'https://memory.agentage.io/mcp';
+export const DOCS_URL = 'https://agentage.io/docs';
+
+/** Per-memory metadata from GET /vaults (mirrors the sync server's VaultInfo). */
+export interface VaultInfo {
+  name: string;
+  files: number;
+  folders: number;
+  updated: string | null;
+  empty: boolean;
+}
 export const DEFAULT_REMOTE_HOST = 'https://sync.agentage.io';
 export const VAULTS_SCHEMA_URL = 'https://memory.agentage.io/schema/vaults.json';
 // The managed remote alias. memory-core resolves "agentage" to the cloud git URL
