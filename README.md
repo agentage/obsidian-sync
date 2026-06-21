@@ -4,7 +4,7 @@
 
 Two-way **Git** sync between your Obsidian vault and your private [Agentage Memory](https://agentage.io) — the shared memory layer for every AI. Your notes stay plain Markdown that you own, and Claude, ChatGPT, Cursor, and any MCP client read and write the *same* files.
 
-> ⚠️ **Status:** desktop git sync + Agentage sign-in (OAuth 2.1 / PKCE) work today. Mobile is wired but experimental (not yet device-verified). Background auto-sync is next.
+> ⚠️ **Status:** **desktop only** today (`isDesktopOnly`). Desktop git sync + Agentage sign-in (OAuth 2.1 / PKCE) work. Mobile is planned (see [Mobile](#mobile-planned)); background auto-sync is next.
 
 ## Features
 
@@ -13,7 +13,7 @@ Two-way **Git** sync between your Obsidian vault and your private [Agentage Memo
 - 🤝 **Shared with every AI over MCP** — the same memory is exposed at `memory.agentage.io`, so Claude / ChatGPT / Cursor read and write the same notes. [How to connect →](https://agentage.io/connect)
 - 🔐 **Sign in once** — OAuth 2.1 / PKCE; the token is kept in Obsidian's encrypted secret storage, never in your notes or config.
 - 🧩 **Plain Markdown, safe merges** — notes stay `.md`; concurrent edits reconcile with a 3-way merge (per-field frontmatter + diff3 body), and conflicts surface as markers + a note — never a silent drop.
-- 📊 **Status at a glance** — on desktop, a status-bar dot (green / red / gray) with a click menu: Sync now, Open dashboard, settings. On mobile (no status bar), the same actions open from the ribbon icon and the command palette.
+- 📊 **Status at a glance** — a status-bar dot (green / red / gray) with a click menu: Sync now, Open dashboard, settings. The same actions are in the command palette and the ribbon.
 
 ## Installation
 
@@ -32,8 +32,8 @@ From the [latest release](https://github.com/agentage/obsidian-sync/releases/lat
 ## Getting started
 
 1. **Settings → Agentage Sync → Start sync with agentage** — sign in. A browser window opens once; no password is stored by the plugin.
-2. **Choose a memory** — open the actions (desktop: click the status-bar dot; mobile: tap the ribbon icon, or run **Agentage Sync: Open menu** from the command palette) → **Choose memory…** → pick an existing memory or **Create a new** one. (A fresh memory makes the cleanest first sync.)
-3. **Sync now** — from the same actions menu or the command palette (**Agentage Sync: Sync now**). Your notes are committed and pushed.
+2. **Choose a memory** — click the status-bar dot (or run **Agentage Sync: Choose memory** from the command palette) → **Choose memory…** → pick an existing memory or **Create a new** one. (A fresh memory makes the cleanest first sync.)
+3. **Sync now** — from the dot menu or the command palette (**Agentage Sync: Sync now**). Your notes are committed and pushed.
 4. **Connect your AI apps** — point Claude / ChatGPT / Cursor at your memory over MCP. [See how to connect →](https://agentage.io/connect)
 
 ## Settings
@@ -48,11 +48,9 @@ From the [latest release](https://github.com/agentage/obsidian-sync/releases/lat
 - **Sync** runs a real git client (vendored [isomorphic-git](https://github.com/isomorphic-git/isomorphic-git)) over Obsidian's network layer, authenticated with your sign-in token (sent only as an `Authorization` header, never in the URL). It never force-pushes — it commits before pulling and 3-way merges.
 - The same repo is what AI apps read and write over MCP — one memory, every AI.
 
-## Mobile support (⚠️ experimental)
+## Mobile (planned)
 
-The plugin is `isDesktopOnly: false` and runs its git engine over Obsidian's vault adapter on mobile too, but mobile sync is **not yet device-verified**. Try it on a throwaway vault first. Desktop is the supported path today.
-
-Mobile has no status bar, so the actions (Sign in, Choose memory, Sync now, Open dashboard) open from the **ribbon icon** (in the left drawer) or the **command palette** (search *Agentage Sync*). Everything else works the same as desktop.
+This release is **desktop only** (`isDesktopOnly: true`), so Obsidian won't offer it on phones yet. The git engine already runs over Obsidian's vault adapter (no Node APIs on the sync path), so the groundwork is in place — what's left is verifying sign-in and first sync on real iOS/Android. Mobile will be re-enabled once that's solid.
 
 ## Privacy & network use
 

@@ -101,9 +101,9 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       void this.auth.handleCallback(params).then(() => this.onAuthChanged());
     });
 
-    // Ribbon shows on mobile (the status bar does NOT). It opens a modal action-picker
-    // (not a Menu — those don't render from a tap on mobile), so Sync now / Choose memory
-    // / dashboard are reachable on phones.
+    // Ribbon + command open a modal action-picker (Sync now / Choose memory / dashboard).
+    // Kept alongside the status-bar dot so the same actions survive when there's no status
+    // bar (the mobile case, once mobile is re-enabled — desktop-only for now).
     this.addRibbonIcon('refresh-cw', 'Agentage Sync', () => this.openActions());
     const sb = this.addStatusBarItem();
     this.statusBar = sb;
