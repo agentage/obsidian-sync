@@ -105,7 +105,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     // Ribbon + command open a modal action-picker (Sync now / Choose memory / dashboard).
     // Kept alongside the status-bar dot so the same actions survive when there's no status
     // bar (the mobile case, once mobile is re-enabled — desktop-only for now).
-    this.addRibbonIcon('refresh-cw', 'Agentage Sync', () => this.openActions());
+    this.addRibbonIcon('network', 'Agentage Sync', () => this.openActions());
     const sb = this.addStatusBarItem();
     this.statusBar = sb;
     sb.addClass('ams-statusbar', 'mod-clickable');

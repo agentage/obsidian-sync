@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Obsidian](https://img.shields.io/badge/Obsidian-1.11.4%2B-7c3aed.svg)](https://obsidian.md)
 
-Two-way **Git** sync between your Obsidian vault and your private [Agentage Memory](https://agentage.io) - the shared memory layer for every AI. Your notes stay plain Markdown that you own, and Claude, ChatGPT, Cursor, and any MCP client read and write the *same* files.
+Stop copying notes into every chatbot. **Agentage Sync** makes your [Obsidian](https://obsidian.md) vault one shared [Agentage Memory](https://agentage.io) that every AI reads and writes over MCP - Claude, ChatGPT, Cursor, or any MCP client - so the same context follows you across apps. It works through two-way **Git** sync to a private hosted memory: notes stay plain Markdown you own, merges are safe with flagged conflicts, and you pick which memory to sync to. Desktop only, with up to 100 MB of storage included.
 
 > ⚠️ **Status:** **desktop only** for now - mobile is on the way.
 
@@ -49,7 +49,7 @@ From the [latest release](https://github.com/agentage/obsidian-sync/releases/lat
 ## Privacy & network use
 
 - **Account required:** you need an agentage account to sign in and sync.
-- **Free:** Agentage Memory is free to use, up to a 100 MB storage cap per account.
+- **Storage:** each account includes up to 100 MB.
 - **No calls until you act:** a fresh or signed-out install makes **no network requests at all** - the plugin only contacts the network once you Connect or Sync.
 - **Network use:** when active, the plugin contacts `auth.agentage.io` (sign-in, OAuth 2.1 / PKCE) and **`sync.agentage.io`** (syncing your vault over Git). "Open dashboard" opens `dashboard.agentage.io` in your browser. AI access to the same memory happens server-side over MCP at `memory.agentage.io`.
 - **Privacy policy:** <https://agentage.io/privacy>. **Terms of Service:** <https://agentage.io/terms>.

@@ -4,6 +4,14 @@ All notable changes to Agentage Sync are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions match the
 `manifest.json` version and the GitHub release tag.
 
+## [0.2.1] - 2026-06-21
+
+### Changed
+
+- Ribbon icon is now `network` (distinct from the `refresh-cw` Sync now action).
+- Store description and README intro rewritten to lead with the value: your vault
+  becomes one memory every AI reads and writes over MCP.
+
 ## [0.2.0] - 2026-06-21
 
 ### Changed
@@ -56,6 +64,7 @@ All notable changes to Agentage Sync are documented here. The format follows
 - Initial release: OAuth 2.1 / PKCE sign-in, two-way Git sync to
   `sync.agentage.io`, memory chooser, and 3-way merge with conflict surfacing.
 
+[0.2.1]: https://github.com/agentage/obsidian-sync/releases/tag/0.2.1
 [0.2.0]: https://github.com/agentage/obsidian-sync/releases/tag/0.2.0
 [0.1.6]: https://github.com/agentage/obsidian-sync/releases/tag/0.1.6
 [0.1.5]: https://github.com/agentage/obsidian-sync/releases/tag/0.1.5
