@@ -37,6 +37,9 @@ const SITE_FQDN =
   (typeof process !== 'undefined' ? process.env?.AGENTAGE_SITE_FQDN : undefined) ?? 'agentage.io';
 const AUTH_ORIGIN = `https://auth.${SITE_FQDN}`;
 const SYNC_ORIGIN = `https://sync.${SITE_FQDN}`;
+// Memory management (list + create) lives on the backend API host, not the sync git
+// host; sync.<fqdn> stays a pure git transport (resolution + push/pull).
+const API_ORIGIN = `https://api.${SITE_FQDN}`;
 const DASHBOARD_ORIGIN = `https://dashboard.${SITE_FQDN}`;
 
 // 3-way merge driver: split-YAML field-LWW + diff3 body (see git/merge-note).
@@ -54,21 +57,20 @@ const safeJson = (text: string): unknown => {
   }
 };
 
-// GET /vaults items are objects ({name,files,…}); tolerate plain strings from an older
-// server that returns just names.
-const parseVaultInfo = (v: unknown): VaultInfo | null => {
-  if (typeof v === 'string') return { name: v, files: 0, folders: 0, updated: null, empty: false };
-  if (v && typeof v === 'object' && typeof (v as { name?: unknown }).name === 'string') {
-    const o = v as Record<string, unknown>;
-    return {
-      name: o.name as string,
-      files: Number(o.files) || 0,
-      folders: Number(o.folders) || 0,
-      updated: typeof o.updated === 'string' ? o.updated : null,
-      empty: o.empty === true,
-    };
-  }
-  return null;
+// Map a backend `Memory` (GET/POST /api/memories) to the plugin's VaultInfo: entries ->
+// files, folderCount -> folders, empty = no entries. Anything without a name is dropped.
+const memoryToVaultInfo = (m: unknown): VaultInfo | null => {
+  if (!m || typeof m !== 'object' || typeof (m as { name?: unknown }).name !== 'string')
+    return null;
+  const o = m as Record<string, unknown>;
+  const files = Number(o.entries) || 0;
+  return {
+    name: o.name as string,
+    files,
+    folders: Number(o.folderCount) || 0,
+    updated: typeof o.updated === 'string' ? o.updated : null,
+    empty: files === 0,
+  };
 };
 
 // Agentage Sync plugin. Config page (writes ~/.agentage/vaults.json) + OAuth sign-in
@@ -363,25 +365,29 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   }
 
   // --- memory selection (SettingsHost) ---
-  /** Existing server memories + their info (files/folders/updated) via GET /vaults. Returns a
-   * result so the chooser can show a real error (with Retry) vs an empty account. */
+  /** Existing server memories + their info (files/folders/updated) via GET
+   * api.<fqdn>/api/memories. Returns a result so the chooser can show a real error
+   * (with Retry) vs an empty account. */
   async listVaults(): Promise<VaultListResult> {
     const token = await this.auth.getValidToken();
     if (!token) return { ok: false, error: 'Sign in to Agentage first.' };
     try {
       const r = await requestUrl({
-        url: `${SYNC_ORIGIN}/vaults`,
+        url: `${API_ORIGIN}/api/memories`,
         method: 'GET',
         headers: { Authorization: `Bearer ${token}` },
         throw: false,
       });
       if (r.status < 200 || r.status >= 300) {
-        const body = safeJson(r.text) as { error?: string } | null;
-        return { ok: false, error: body?.error ?? `Couldn't load memories (HTTP ${r.status})` };
+        const body = safeJson(r.text) as { error?: { message?: string } } | null;
+        return {
+          ok: false,
+          error: body?.error?.message ?? `Couldn't load memories (HTTP ${r.status})`,
+        };
       }
-      const raw = (safeJson(r.text) as { vaults?: unknown })?.vaults;
+      const raw = (safeJson(r.text) as { data?: unknown })?.data;
       const vaults = Array.isArray(raw)
-        ? raw.map(parseVaultInfo).filter((v): v is VaultInfo => v !== null)
+        ? raw.map(memoryToVaultInfo).filter((v): v is VaultInfo => v !== null)
         : [];
       return { ok: true, vaults };
     } catch (e) {
@@ -389,16 +395,17 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     }
   }
 
-  /** Create a new server memory via the create API (git push never creates — R14). */
+  /** Create a new server memory via POST api.<fqdn>/api/memories (the management API;
+   * the sync host stays a pure git transport and git push never creates — R14). */
   async createVault(name: string): Promise<{ ok: boolean; vault?: string; error?: string }> {
     const token = await this.auth.getValidToken();
     if (!token) return { ok: false, error: 'Sign in to Agentage first.' };
     const vault = normalizeVaultName(name);
     if (!vault) return { ok: false, error: 'Enter a valid name (a-z, 0-9, -, _).' };
     try {
-      // Account comes from the token; the create API is at the apex (no sub in the URL).
+      // Account comes from the token; the create API takes just { name } (no sub in the URL).
       const r = await requestUrl({
-        url: `${SYNC_ORIGIN}/vaults`,
+        url: `${API_ORIGIN}/api/memories`,
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: vault }),
@@ -408,10 +415,10 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
         this.resolver.invalidate(); // so the new memory shows up on the next list
         return { ok: true, vault };
       }
-      if (r.status === 404 || r.status === 405)
+      if (r.status === 404 || r.status === 405 || r.status === 503)
         return { ok: false, error: 'Creating memories is not available on the server yet.' };
-      const body = safeJson(r.text) as { error?: string } | null;
-      return { ok: false, error: body?.error ?? `Create failed (HTTP ${r.status})` };
+      const body = safeJson(r.text) as { error?: { message?: string } } | null;
+      return { ok: false, error: body?.error?.message ?? `Create failed (HTTP ${r.status})` };
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     }
