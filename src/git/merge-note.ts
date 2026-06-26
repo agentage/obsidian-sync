@@ -1,9 +1,9 @@
 // Pure 3-way merge for a markdown note: split YAML frontmatter FIRST (per-key
 // last-write-wins + set-union for list keys), diff3 the BODY only, emit standard
 // conflict markers on a body overlap. Frontmatter NEVER reaches diff3 - a marker
-// inside `---` corrupts the note (yaml.load throws / silent body-swallow). Pure
+// inside `---` corrupts the note (load throws / silent body-swallow). Pure
 // (3 strings in, {text,clean} out) → no git/fs deps → unit-testable.
-import yaml from 'js-yaml';
+import { load, dump } from 'js-yaml';
 import diff3Merge from 'diff3';
 
 type Fm = Record<string, unknown>;
@@ -13,7 +13,7 @@ const FM = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 function splitFm(t: string): { fm: Fm; body: string } {
   const m = t.match(FM);
   if (!m) return { fm: {}, body: t };
-  return { fm: (yaml.load(m[1]) as Fm) ?? {}, body: t.slice(m[0].length) };
+  return { fm: (load(m[1]) as Fm) ?? {}, body: t.slice(m[0].length) };
 }
 
 function eq(a: unknown, b: unknown): boolean {
@@ -97,7 +97,7 @@ export function mergeNote(
   const t = splitFm(theirs);
   const fm = mergeFm(b.fm, o.fm, t.fm);
   const { body, clean } = diff3Body(o.body, b.body, t.body); // BODY ONLY
-  const dumped = yaml.dump(fm, { lineWidth: -1, sortKeys: false }); // one structural dump, never string-concat
+  const dumped = dump(fm, { lineWidth: -1, sortKeys: false }); // one structural dump, never string-concat
   const fmBlock = Object.keys(fm).length ? `---\n${dumped}---\n` : '';
   return { text: fmBlock + body, clean };
 }

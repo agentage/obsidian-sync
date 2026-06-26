@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import yaml from 'js-yaml';
+import { load, dump } from 'js-yaml';
 import { mergeNote } from './merge-note';
 
 const note = (fm: Record<string, unknown>, body: string) =>
-  `---\n${yaml.dump(fm, { lineWidth: -1, sortKeys: false })}---\n${body}`;
+  `---\n${dump(fm, { lineWidth: -1, sortKeys: false })}---\n${body}`;
 
 describe('mergeNote (R14 frontmatter LWW + union, R15 body diff3 + markers)', () => {
   it('takes the only-changed side per key (theirs)', () => {
@@ -12,7 +12,7 @@ describe('mergeNote (R14 frontmatter LWW + union, R15 body diff3 + markers)', ()
     const theirs = note({ title: 'A', status: 'done' }, 'body\n');
     const { text, clean } = mergeNote(base, ours, theirs);
     expect(clean).toBe(true);
-    expect((yaml.load(text.match(/^---\n([\s\S]*?)\n---/)![1]) as { status: string }).status).toBe(
+    expect((load(text.match(/^---\n([\s\S]*?)\n---/)![1]) as { status: string }).status).toBe(
       'done'
     );
   });
@@ -30,7 +30,7 @@ describe('mergeNote (R14 frontmatter LWW + union, R15 body diff3 + markers)', ()
     const ours = note({ tags: ['x', 'a'] }, 'b\n');
     const theirs = note({ tags: ['x', 'b'] }, 'b\n');
     const { text } = mergeNote(base, ours, theirs);
-    const tags = (yaml.load(text.match(/^---\n([\s\S]*?)\n---/)![1]) as { tags: string[] }).tags;
+    const tags = (load(text.match(/^---\n([\s\S]*?)\n---/)![1]) as { tags: string[] }).tags;
     expect(new Set(tags)).toEqual(new Set(['x', 'a', 'b']));
   });
 
@@ -39,7 +39,7 @@ describe('mergeNote (R14 frontmatter LWW + union, R15 body diff3 + markers)', ()
     const ours = note({ n: 2, updated: '2026-06-20' }, 'b\n');
     const theirs = note({ n: 3, updated: '2026-03-01' }, 'b\n');
     const { text } = mergeNote(base, ours, theirs);
-    expect((yaml.load(text.match(/^---\n([\s\S]*?)\n---/)![1]) as { n: number }).n).toBe(2);
+    expect((load(text.match(/^---\n([\s\S]*?)\n---/)![1]) as { n: number }).n).toBe(2);
   });
 
   it('merges non-overlapping body edits cleanly (both survive)', () => {
@@ -71,7 +71,7 @@ describe('mergeNote (R14 frontmatter LWW + union, R15 body diff3 + markers)', ()
     const { text } = mergeNote(base, ours, theirs);
     const fmRaw = text.match(/^---\n([\s\S]*?)\n---/)![1];
     expect(fmRaw).not.toContain('<<<<<<<');
-    expect(() => yaml.load(fmRaw)).not.toThrow(); // frontmatter still parses
+    expect(() => load(fmRaw)).not.toThrow(); // frontmatter still parses
   });
 
   it('handles notes with no frontmatter (clean, no --- block)', () => {
