@@ -158,7 +158,7 @@ jobs:
 
       - name: Attest build provenance
         if: steps.ver.outputs.release == 'true'
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             main.js
