@@ -34,6 +34,14 @@ export interface AgentageMemorySettings {
   showAdvanced: boolean;
   /** Plugin-local — the vault name last written to vaults.json, for renames. */
   writtenVaultName: string;
+  /** Experimental: enable the CouchDB device-edge sync channel (dev/testing). */
+  couchEnabled: boolean;
+  /** CouchDB endpoint, e.g. http://localhost:5985 (dev) or https://couch.<fqdn>. */
+  couchEndpoint: string;
+  /** Per-memory CouchDB database name (e.g. mem_<hash>). */
+  couchDb: string;
+  /** Authorization header for couch: "Basic <b64>" (dev/admin) or "Bearer <jwt>". */
+  couchAuthorization: string;
 }
 
 export const MCP_ENDPOINT = 'https://memory.agentage.io/mcp';
@@ -70,6 +78,10 @@ export const DEFAULT_SETTINGS: AgentageMemorySettings = {
   configDir: '~/.agentage',
   showAdvanced: false,
   writtenVaultName: '',
+  couchEnabled: false,
+  couchEndpoint: '',
+  couchDb: '',
+  couchAuthorization: '',
 };
 
 /** Trim + drop trailing slashes from a URL-ish value. */
