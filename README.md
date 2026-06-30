@@ -17,7 +17,7 @@ Stop copying notes into every chatbot. **Agentage Sync** makes your [Obsidian](h
 - 🤝 **Shared with every AI over MCP** - the same memory is exposed at `memory.agentage.io`, so Claude / ChatGPT / Cursor read and write the same notes. [How to connect →](https://agentage.io/connect)
 - 🔐 **Sign in once** - a secure browser sign-in; your access is kept in Obsidian's encrypted storage, never in your notes or config.
 - 🧩 **Plain Markdown, safe merges** - notes stay `.md`; edits from different places merge automatically, and anything that can't be is flagged with a note - never a silent drop.
-- 📊 **Status at a glance** - a status-bar dot (green / red / gray) with a click menu: Sync now, Open dashboard, settings. The same actions are in the command palette and the ribbon.
+- 📊 **Status at a glance** - a status-bar dot (green / red / gray) with a click menu: Sync now, Open dashboard, Settings. The same actions are in the command palette and the ribbon.
 
 ## Installation
 
