@@ -1,4 +1,4 @@
-import { FileSystemAdapter, Menu, Notice, Platform, Plugin, requestUrl } from 'obsidian';
+import { FileSystemAdapter, Menu, Notice, Platform, Plugin, TFile, requestUrl } from 'obsidian';
 import type { FsClient, MergeDriverCallback } from 'isomorphic-git';
 import {
   type AgentageMemorySettings,
@@ -29,6 +29,7 @@ import type { GetJson } from './auth/discovery';
 import { HostResolver, buildRepoUrl } from './resolve-host';
 import { openMemoryChooser } from './memory-chooser';
 import { openActionsMenu, type PluginAction } from './actions-menu';
+import { CouchSync } from './couch/couch-sync';
 
 // Single-host: every origin derives from SITE_FQDN. Defaults to prod; the
 // AGENTAGE_SITE_FQDN env var (desktop only, same pattern as AGENTAGE_CONFIG_DIR)
@@ -91,6 +92,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   // if the OS keyring (secretStorage) is unavailable; persisted via secretStorage +
   // ~/.agentage/auth.json. Hydrated from auth.json on desktop at load.
   private readonly secretCache = new Map<string, string>();
+  private couch?: CouchSync; // experimental CouchDB sync channel (dev/testing)
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -128,6 +130,60 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       callback: () => this.chooseMemory(),
     });
     this.addCommand({ id: 'open-menu', name: 'Open menu', callback: () => this.openActions() });
+    this.addCommand({
+      id: 'couch-sync-now',
+      name: 'CouchDB: sync now (experimental)',
+      callback: () =>
+        this.couch
+          ? void this.couch.syncNow().then(() => new Notice('Agentage Couch: synced'))
+          : new Notice('Agentage Couch: not enabled (Settings → CouchDB sync)'),
+    });
+    this.startCouchSync();
+  }
+
+  // Experimental CouchDB device-edge channel (the server bridge commits couch -> git).
+  // Off unless enabled + configured in settings; never touches the git sync path.
+  private startCouchSync(): void {
+    const s = this.settings;
+    if (!s.couchEnabled || !s.couchEndpoint || !s.couchDb || !s.couchAuthorization) return;
+    const couch = new CouchSync(
+      this.app.vault,
+      { endpoint: s.couchEndpoint, db: s.couchDb, authorization: s.couchAuthorization },
+      (m) => console.debug('[Agentage Couch]', m)
+    );
+    this.couch = couch;
+    void couch.syncNow();
+    const onMd = (cb: (path: string) => void) => (f: unknown) => {
+      if (f instanceof TFile && f.extension === 'md') cb(f.path);
+    };
+    this.registerEvent(
+      this.app.vault.on(
+        'modify',
+        onMd((p) => void couch.pushFile(p))
+      )
+    );
+    this.registerEvent(
+      this.app.vault.on(
+        'create',
+        onMd((p) => void couch.pushFile(p))
+      )
+    );
+    this.registerEvent(
+      this.app.vault.on(
+        'delete',
+        onMd((p) => void couch.removeFile(p))
+      )
+    );
+    this.registerEvent(
+      this.app.vault.on('rename', (f, oldPath) => {
+        if (f instanceof TFile && f.extension === 'md') {
+          void couch.removeFile(oldPath);
+          void couch.pushFile(f.path);
+        }
+      })
+    );
+    this.registerInterval(window.setInterval(() => void couch.pullOnce(), 2000));
+    new Notice('Agentage CouchDB sync started (experimental)');
   }
 
   private buildAuth(): void {
