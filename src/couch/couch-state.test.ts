@@ -81,3 +81,30 @@ describe('CouchState - pending pushes', () => {
     expect(new CouchState(b.load, b.save).pendingPaths()).toEqual(['x.md']);
   });
 });
+
+describe('CouchState - pending deletes', () => {
+  it('enqueues without duplicates and dequeues, persisting real changes only', async () => {
+    const b = backing();
+    const s = new CouchState(b.load, b.save);
+    await s.enqueueDelete('a.md');
+    await s.enqueueDelete('a.md'); // dup -> no write
+    await s.enqueueDelete('b.md');
+    expect(s.pendingDeletePaths().sort()).toEqual(['a.md', 'b.md']);
+    expect(b.save).toHaveBeenCalledTimes(2);
+    await s.dequeueDelete('a.md');
+    await s.dequeueDelete('a.md'); // absent -> no write
+    expect(s.pendingDeletePaths()).toEqual(['b.md']);
+    expect(b.save).toHaveBeenCalledTimes(3);
+    expect(b.get()?.pendingDeletes).toEqual(['b.md']);
+  });
+
+  it('rehydrates pending deletes on reload, independent of pending pushes', async () => {
+    const b = backing();
+    const s = new CouchState(b.load, b.save);
+    await s.enqueue('push.md');
+    await s.enqueueDelete('del.md');
+    const reloaded = new CouchState(b.load, b.save);
+    expect(reloaded.pendingPaths()).toEqual(['push.md']);
+    expect(reloaded.pendingDeletePaths()).toEqual(['del.md']);
+  });
+});
