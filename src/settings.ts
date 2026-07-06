@@ -34,6 +34,8 @@ export interface AgentageMemorySettings {
   showAdvanced: boolean;
   /** Plugin-local — the vault name last written to vaults.json, for renames. */
   writtenVaultName: string;
+  /** Site host override for testing against dev (e.g. dev.agentage.io). Empty = env-or-prod. */
+  siteFqdn: string;
 }
 
 export const MCP_ENDPOINT = 'https://memory.agentage.io/mcp';
@@ -70,7 +72,21 @@ export const DEFAULT_SETTINGS: AgentageMemorySettings = {
   configDir: '~/.agentage',
   showAdvanced: false,
   writtenVaultName: '',
+  siteFqdn: '',
 };
+
+export const PROD_SITE_FQDN = 'agentage.io';
+
+/** Host-ish input tolerance: trim, drop a pasted scheme and trailing slashes. */
+const normalizeHost = (input: string): string =>
+  input
+    .trim()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/+$/, '');
+
+/** Effective site host: settings override (non-empty) > AGENTAGE_SITE_FQDN env > prod. */
+export const resolveSiteFqdn = (settingValue: string, envValue: string | undefined): string =>
+  normalizeHost(settingValue) || normalizeHost(envValue ?? '') || PROD_SITE_FQDN;
 
 /** Trim + drop trailing slashes from a URL-ish value. */
 export const normalizeRemote = (input: string): string => input.trim().replace(/\/+$/, '');
