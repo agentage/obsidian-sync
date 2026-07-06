@@ -29,7 +29,13 @@ import { createAuthJsonWriter, readAuthJsonState } from './auth/auth-json';
 import { startLoopbackServer } from './auth/loopback-server';
 import type { HttpPost } from './auth/oauth';
 import type { GetJson } from './auth/discovery';
-import { HostResolver, buildRepoUrl, channelForVault, type SyncResolution } from './resolve-host';
+import {
+  HostResolver,
+  buildRepoUrl,
+  channelForVault,
+  gitMemoryFromConfig,
+  type SyncResolution,
+} from './resolve-host';
 import { openMemoryChooser } from './memory-chooser';
 import { openActionsMenu, type PluginAction } from './actions-menu';
 import { openSyncPreview, type SyncPreview } from './sync-preview-modal';
@@ -199,6 +205,19 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       return { ok: true, message: `${memory}: couch synced` };
     } catch (e) {
       return { ok: false, message: (e as Error).message };
+    }
+  }
+
+  /** The agentage git memory this vault folder's `.git` is bound to, or null when there is no
+   * `.git/config` or its origin remote is not on `gitEndpoint`. Reads via the raw adapter since
+   * `.git` is outside Obsidian's TFile index. Any read error degrades to null (do not block). */
+  private async gitBoundMemory(gitEndpoint: string): Promise<string | null> {
+    const adapter = this.app.vault.adapter;
+    try {
+      if (!(await adapter.exists('.git/config'))) return null;
+      return gitMemoryFromConfig(await adapter.read('.git/config'), gitEndpoint);
+    } catch {
+      return null;
     }
   }
 
@@ -667,6 +686,17 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       // channel routes to the couch controller; every other memory stays on the git path.
       const ch = channelForVault(res, syncedVault);
       if (ch.channel === 'couch') {
+        // A couch memory needs a git-free folder. If this folder is still a git working tree
+        // bound to a DIFFERENT git memory, couch-syncing into it silently mixes two memories in
+        // one folder - surface the cause instead of no-oping (never auto-delete the user's .git).
+        const gitMemory = await this.gitBoundMemory(res.gitEndpoint);
+        if (gitMemory && gitMemory !== syncedVault) {
+          const message =
+            `This folder is already synced as a git memory (${gitMemory}). A couch memory needs ` +
+            `its own (git-free) folder - open a new vault or remove the git binding.`;
+          new Notice(message);
+          return { ok: false, message };
+        }
         this.lastVault = syncedVault;
         return this.couchSyncNow(ch, syncedVault);
       }

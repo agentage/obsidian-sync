@@ -88,6 +88,33 @@ export function buildRepoUrl(gitEndpoint: string, vault: string): string {
   return `${gitEndpoint.replace(/\/+$/, '')}/${vault}.git`;
 }
 
+/** The agentage git memory a `.git/config` is bound to via its origin remote, or null when the
+ * folder has no origin remote on `gitEndpoint`. Inverse of buildRepoUrl - used to guard a
+ * couch-routed memory from silently syncing into a folder still bound to a git memory. */
+export function gitMemoryFromConfig(gitConfig: string, gitEndpoint: string): string | null {
+  const url = originRemoteUrl(gitConfig);
+  if (!url) return null;
+  const base = gitEndpoint.replace(/\/+$/, '');
+  if (!url.startsWith(`${base}/`)) return null;
+  const match = /^([^/]+)\.git$/.exec(url.slice(base.length + 1));
+  return match ? match[1] : null;
+}
+
+// Minimal ini scan: the first `url = ...` under [remote "origin"] (what isomorphic-git writes).
+function originRemoteUrl(gitConfig: string): string | null {
+  let inOrigin = false;
+  for (const raw of gitConfig.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line.startsWith('[')) {
+      inOrigin = /^\[remote "origin"\]$/.test(line);
+      continue;
+    }
+    const match = inOrigin ? /^url\s*=\s*(.+)$/.exec(line) : null;
+    if (match) return match[1].trim();
+  }
+  return null;
+}
+
 export class HostResolver {
   private cached?: { value: SyncResolution; expiresAt: number };
 
