@@ -5,7 +5,9 @@ import {
   type VaultInfo,
   type VaultListResult,
   DEFAULT_SETTINGS,
+  PROD_SITE_FQDN,
   normalizeVaultName,
+  resolveSiteFqdn,
 } from './settings';
 import { AgentageMemorySettingTab, type SettingsHost } from './settings-tab';
 import { applyVaultsConfig, type ApplyResult } from './vaults-config';
@@ -34,17 +36,11 @@ import { openSyncPreview, type SyncPreview } from './sync-preview-modal';
 import { CouchSync, type CouchAuthorize } from './couch/couch-sync';
 import { CouchTokenClient, type CouchTokenPost } from './couch/couch-token';
 
-// Single-host: every origin derives from SITE_FQDN. Defaults to prod; the
-// AGENTAGE_SITE_FQDN env var (desktop only, same pattern as AGENTAGE_CONFIG_DIR)
-// repoints it at dev for e2e (e.g. dev.agentage.io -> sync.dev.agentage.io).
-const SITE_FQDN =
-  (typeof process !== 'undefined' ? process.env?.AGENTAGE_SITE_FQDN : undefined) ?? 'agentage.io';
-const AUTH_ORIGIN = `https://auth.${SITE_FQDN}`;
-const SYNC_ORIGIN = `https://sync.${SITE_FQDN}`;
-// Memory management (list + create) lives on the backend API host, not the sync git
-// host; sync.<fqdn> stays a pure git transport (resolution + push/pull).
-const API_ORIGIN = `https://api.${SITE_FQDN}`;
-const DASHBOARD_ORIGIN = `https://dashboard.${SITE_FQDN}`;
+// Single-host: every origin derives from the site FQDN. Precedence: the persisted
+// `siteFqdn` setting (non-empty) > the AGENTAGE_SITE_FQDN env var (desktop only, same
+// pattern as AGENTAGE_CONFIG_DIR) > prod. Snapshotted once per session at load; changing
+// the setting needs an Obsidian restart because tokens + resolver are host-bound.
+const ENV_SITE_FQDN = typeof process !== 'undefined' ? process.env?.AGENTAGE_SITE_FQDN : undefined;
 
 // 3-way merge driver: split-YAML field-LWW + diff3 body (see git/merge-note).
 const agentageMergeDriver: MergeDriverCallback = ({ contents }) => {
@@ -82,6 +78,8 @@ const memoryToVaultInfo = (m: unknown): VaultInfo | null => {
 export default class AgentageMemoryPlugin extends Plugin implements SettingsHost {
   settings: AgentageMemorySettings = DEFAULT_SETTINGS;
   isDesktop = Platform.isDesktopApp;
+  // The host in effect this session (resolved once at load, after settings are read).
+  private activeFqdn = PROD_SITE_FQDN;
   private statusBar?: HTMLElement;
   private statusDot?: HTMLElement;
   private statusEl?: HTMLElement; // optional label (e.g. "Choose memory"); empty otherwise
@@ -104,6 +102,9 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    this.activeFqdn = resolveSiteFqdn(this.settings.siteFqdn, ENV_SITE_FQDN);
+    if (this.activeFqdn !== PROD_SITE_FQDN)
+      console.warn(`[Agentage Sync] non-production host active: ${this.activeFqdn}`);
     this.buildAuth();
     await this.hydrateAuth();
 
@@ -217,6 +218,19 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     }
   }
 
+  // --- site host (SettingsHost) ---
+  /** The host every origin is derived from this session. */
+  activeSiteFqdn(): string {
+    return this.activeFqdn;
+  }
+  /** The host the CURRENT settings resolve to (differs from active until a restart). */
+  pendingSiteFqdn(): string {
+    return resolveSiteFqdn(this.settings.siteFqdn, ENV_SITE_FQDN);
+  }
+  private origin(sub: string): string {
+    return `https://${sub}.${this.activeFqdn}`;
+  }
+
   private buildAuth(): void {
     // Token store: an in-memory cache (always works in-session) mirrored to Obsidian's
     // encrypted secretStorage, never data.json/vaults.json. secretStorage can THROW when
@@ -260,7 +274,10 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       },
     };
     const authJson = this.isDesktop
-      ? createAuthJsonWriter({ configDirSetting: this.settings.configDir, siteFqdn: SITE_FQDN })
+      ? createAuthJsonWriter({
+          configDirSetting: this.settings.configDir,
+          siteFqdn: this.activeFqdn,
+        })
       : null;
     const store = createAuthStore(secrets, authJson);
     const post: HttpPost = async (url, init) => {
@@ -281,7 +298,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       store,
       post,
       getJson,
-      authOrigin: () => AUTH_ORIGIN,
+      authOrigin: () => this.origin('auth'),
       notify: (m) => new Notice(m),
       openExternal: (url) => {
         console.debug('[Agentage Sync] opening authorize URL in browser');
@@ -294,7 +311,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       loopback: this.isDesktop ? () => startLoopbackServer() : undefined,
     });
     this.resolver = new HostResolver(
-      SYNC_ORIGIN,
+      this.origin('sync'),
       async (url, token) => {
         const res = await requestUrl({
           url,
@@ -333,7 +350,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     const state = await readAuthJsonState(this.settings.configDir);
     if (!state?.tokens?.accessToken || !state.tokens.refreshToken) return;
     // Never replay a token minted for a different host (e.g. a dev auth.json against prod).
-    if (state.siteFqdn && state.siteFqdn !== SITE_FQDN) {
+    if (state.siteFqdn && state.siteFqdn !== this.activeFqdn) {
       console.debug('[Agentage Sync] auth.json is for a different host; skipping hydration');
       return;
     }
@@ -379,7 +396,10 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     this.statusDot.addClass(`is-${tone}`);
     // A visible label for the two states that need a user action (not just a tooltip).
     const label = tone === 'gray' ? 'Sign in' : tone === 'amber' ? 'Choose Memory' : '';
-    this.statusEl?.setText(label);
+    // A non-prod host stays visible in the status bar so dev can't be mistaken for prod.
+    const host = this.activeFqdn === PROD_SITE_FQDN ? '' : this.activeFqdn;
+    if (host) tip = `${tip} Host: ${host}.`;
+    this.statusEl?.setText(host ? (label ? `${label} · ${host}` : host) : label);
     this.statusBar.setAttribute('aria-label', tip);
     this.statusBar.setAttribute('title', tip);
   }
@@ -449,7 +469,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
    * the last synced one, then the memories list if nothing is chosen yet. */
   private openDashboard(): void {
     const v = this.settings.vault || this.lastVault;
-    const base = `${DASHBOARD_ORIGIN}/memories`;
+    const base = `${this.origin('dashboard')}/memories`;
     window.open(v ? `${base}/${encodeURIComponent(v)}` : base, '_blank');
   }
 
@@ -475,7 +495,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     if (!token) return { ok: false, error: 'Sign in to Agentage first.' };
     try {
       const r = await requestUrl({
-        url: `${API_ORIGIN}/api/memories`,
+        url: `${this.origin('api')}/api/memories`,
         method: 'GET',
         headers: { Authorization: `Bearer ${token}` },
         throw: false,
@@ -507,7 +527,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     try {
       // Account comes from the token; the create API takes just { name } (no sub in the URL).
       const r = await requestUrl({
-        url: `${API_ORIGIN}/api/memories`,
+        url: `${this.origin('api')}/api/memories`,
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: vault }),

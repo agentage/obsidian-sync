@@ -64,6 +64,14 @@
   font-size: var(--font-ui-small);
 }
 
+/* Non-production host warning (settings tab). */
+.ams-host-banner {
+  color: var(--text-warning, var(--text-error));
+  font-weight: var(--font-semibold);
+  font-size: var(--font-ui-small);
+  margin: 0.2em 0 0.8em;
+}
+
 .ams-settings .ams-big {
   font-weight: var(--font-semibold);
 }
