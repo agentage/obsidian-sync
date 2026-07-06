@@ -382,6 +382,8 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   }
 
   private onAuthChanged(): void {
+    // Auto sign-out funnels here (not disconnect); drop the live couch controller so a new user reuses no stale db.
+    if (!this.auth.isSignedIn()) this.couchChannel.clear();
     this.settingTab?.display();
     this.refreshStatus();
   }
