@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { HostResolver, parseResolution, buildRepoUrl, channelForVault } from './resolve-host';
+import {
+  HostResolver,
+  parseResolution,
+  buildRepoUrl,
+  channelForVault,
+  gitMemoryFromConfig,
+} from './resolve-host';
 
 describe('resolve-host (R7 resolve + 1h cache)', () => {
   it('parses a well-formed resolution and defaults ttl/region/vaults', () => {
@@ -57,7 +63,7 @@ describe('resolve-host (R7 resolve + 1h cache)', () => {
   });
 });
 
-describe('resolve-host — couch channel parsing (additive)', () => {
+describe('resolve-host - couch channel parsing (additive)', () => {
   const couchPayload = {
     git_endpoint: 'https://sync.x/u',
     vaults: ['notes'],
@@ -110,5 +116,32 @@ describe('resolve-host — couch channel parsing (additive)', () => {
   it('channelForVault is git for a git-only resolution', () => {
     const r = parseResolution({ git_endpoint: 'https://sync.x/u', vaults: ['notes'] });
     expect(channelForVault(r, 'notes')).toEqual({ channel: 'git' });
+  });
+});
+
+describe('gitMemoryFromConfig - the git memory a folder is bound to', () => {
+  const cfg = (url: string) =>
+    `[core]\n\trepositoryformatversion = 0\n[remote "origin"]\n\turl = ${url}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n`;
+
+  it('extracts the memory from an origin remote on the resolved endpoint', () => {
+    expect(gitMemoryFromConfig(cfg('https://sync.x/u/default.git'), 'https://sync.x/u')).toBe(
+      'default'
+    );
+  });
+
+  it('tolerates a trailing slash on the endpoint', () => {
+    expect(gitMemoryFromConfig(cfg('https://sync.x/u/default.git'), 'https://sync.x/u/')).toBe(
+      'default'
+    );
+  });
+
+  it('returns null for a remote on a different host (a user`s own git repo)', () => {
+    expect(gitMemoryFromConfig(cfg('https://github.com/me/notes.git'), 'https://sync.x/u')).toBe(
+      null
+    );
+  });
+
+  it('returns null when there is no origin remote', () => {
+    expect(gitMemoryFromConfig('[core]\n\tbare = false\n', 'https://sync.x/u')).toBe(null);
   });
 });
