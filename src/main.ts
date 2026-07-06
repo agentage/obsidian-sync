@@ -24,6 +24,7 @@ import {
   CLIENT_ID_SECRET,
 } from './auth/token-store';
 import { createAuthJsonWriter, readAuthJsonState } from './auth/auth-json';
+import { startLoopbackServer } from './auth/loopback-server';
 import type { HttpPost } from './auth/oauth';
 import type { GetJson } from './auth/discovery';
 import { HostResolver, buildRepoUrl } from './resolve-host';
@@ -202,6 +203,9 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       },
       now: () => Date.now(),
       onChange: () => this.onAuthChanged(),
+      // RFC 8252: desktop signs in via a 127.0.0.1 listener (snap/flatpak Obsidian drop
+      // obsidian:// callbacks); without the factory (mobile) auth-flow uses the deep link.
+      loopback: this.isDesktop ? () => startLoopbackServer() : undefined,
     });
     this.resolver = new HostResolver(
       SYNC_ORIGIN,
