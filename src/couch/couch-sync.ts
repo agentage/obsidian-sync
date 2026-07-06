@@ -111,6 +111,14 @@ export class CouchSync {
       body: JSON.stringify({ new_edits: false, docs: leaves }),
     });
     if (!ok2xx(bulk.status)) throw new Error(`couch push leaves ${bulk.status} for ${path}`);
+    // new_edits:false lists an entry ONLY for a leaf that genuinely failed to write, so any
+    // reported error means the file doc would reference a missing leaf - throw, caller re-queues.
+    const leafErr = (Array.isArray(bulk.json) ? bulk.json : []).find(
+      (e): e is { id?: string; error: string } =>
+        !!e && typeof e === 'object' && typeof (e as { error?: unknown }).error === 'string'
+    );
+    if (leafErr)
+      throw new Error(`couch push leaf ${leafErr.error} (${leafErr.id ?? '?'}) for ${path}`);
     const put: FileDoc = { ...fileDoc };
     if (cur && cur._rev) put._rev = cur._rev; // normal update so this device's edit wins
     const r = await this.req(`/${encodeURIComponent(put._id)}`, {

@@ -197,6 +197,41 @@ describe('a couch-rejected push is queued, not silently cached', () => {
   });
 });
 
+describe('a per-leaf _bulk_docs error queues the push, no file doc PUT', () => {
+  it('throws on a reported leaf error so the file doc (missing leaf) is not written, then retries', async () => {
+    const vault = new FakeVault({ 'notes/n.md': 'X' });
+    const state = new CouchState(
+      () => undefined,
+      async () => {}
+    );
+    const couch = makeSync(vault, state);
+
+    handler = (url, method) => {
+      // new_edits:false returns an entry ONLY for a leaf that failed: a genuine per-doc error.
+      if (url.includes('_bulk_docs')) return res(200, [{ id: 'h:bad', error: 'forbidden' }]);
+      if (url.includes('f%3A') && method === 'PUT') return res(200, { ok: true });
+      return res(404, {}); // f: GET -> not on server yet
+    };
+    await couch.pushFileLive('notes/n.md');
+    expect(state.pendingPaths()).toEqual(['notes/n.md']); // queued, retryable
+    expect(state.revFor('notes/n.md')).toBeUndefined(); // NOT cached
+    const puts = mockRequestUrl.mock.calls.filter(
+      (c) => (c[0] as RequestUrlParam).method === 'PUT'
+    );
+    expect(puts.length).toBe(0); // never PUT a file doc whose leaves may be missing
+
+    handler = (url, method) => {
+      if (url.includes('/_changes')) return res(200, { results: [], last_seq: '0' });
+      if (url.includes('_bulk_docs')) return res(200, []); // all leaves accepted now
+      if (url.includes('f%3A') && method === 'PUT') return res(200, { ok: true });
+      return res(404, {});
+    };
+    await couch.tick();
+    expect(state.pendingPaths()).toEqual([]);
+    expect(state.revFor('notes/n.md')).toBeDefined(); // cached only after the leaves landed
+  });
+});
+
 describe('a rejected delete stays retryable', () => {
   it('queues the path on a non-2xx DELETE, then a later tick completes it', async () => {
     const vault = new FakeVault(); // file already gone locally
