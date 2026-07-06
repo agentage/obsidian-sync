@@ -24,7 +24,7 @@ describe('parseCouchToken', () => {
   });
 });
 
-describe('CouchTokenClient — mint + cache + refresh', () => {
+describe('CouchTokenClient - mint + cache + refresh', () => {
   const make = (
     post: CouchTokenPost,
     bearer: string | null = 'oauth-bearer',

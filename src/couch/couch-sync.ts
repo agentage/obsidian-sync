@@ -18,6 +18,7 @@ import type { CouchState } from './couch-state';
 // content already matches is skipped, so the vault<->couch<->git loop converges.
 
 const DEFAULT_PAGE = 200; // _changes page size so a big feed never lands in one response
+const ok2xx = (status: number): boolean => status >= 200 && status < 300;
 
 export interface CouchSyncConfig {
   endpoint: string; // discovered couch host, e.g. https://couch.<fqdn>
@@ -71,18 +72,18 @@ export class CouchSync {
     return send();
   }
 
-  private async getDoc(id: string, rev?: string): Promise<FileDoc | (LeafDoc & FileDoc) | null> {
+  private async getDoc(id: string, rev?: string): Promise<(FileDoc & Partial<LeafDoc>) | null> {
     const r = await this.req(
       `/${encodeURIComponent(id)}${rev ? `?rev=${encodeURIComponent(rev)}` : ''}`
     );
-    return r.status === 200 ? (r.json as FileDoc) : null;
+    return r.status === 200 ? (r.json as FileDoc & Partial<LeafDoc>) : null;
   }
   // Mirror the server's decodeFile: a missing leaf THROWS, never substitutes an empty chunk
   // (which would truncate the note). The caller aborts the pull round and keeps the cursor.
   private async reassemble(fdoc: FileDoc): Promise<string> {
     const parts: string[] = [];
     for (const id of fdoc.leaves) {
-      const leaf = (await this.getDoc(id)) as unknown as LeafDoc | null;
+      const leaf = await this.getDoc(id);
       if (!leaf || typeof leaf.data !== 'string')
         throw new Error(`couch pull: missing leaf ${id} for ${fdoc.path}`);
       parts.push(leaf.data);
@@ -104,16 +105,19 @@ export class CouchSync {
       await this.state.setRev(path, rev); // remote already converged; cache so we skip next time
       return;
     }
-    await this.req('/_bulk_docs', {
+    const bulk = await this.req('/_bulk_docs', {
       method: 'POST',
       body: JSON.stringify({ new_edits: false, docs: leaves }),
     });
+    if (!ok2xx(bulk.status)) throw new Error(`couch push leaves ${bulk.status} for ${path}`);
     const put: FileDoc = { ...fileDoc };
     if (cur && cur._rev) put._rev = cur._rev; // normal update so this device's edit wins
     const r = await this.req(`/${encodeURIComponent(put._id)}`, {
       method: 'PUT',
       body: JSON.stringify(put),
     });
+    // Cache the pushed rev only after couch accepted it, so a rejected push stays retryable.
+    if (!ok2xx(r.status)) throw new Error(`couch push ${r.status} for ${path}`);
     await this.state.setRev(path, rev);
     this.log(`push ${path} -> ${r.status}`);
   }
