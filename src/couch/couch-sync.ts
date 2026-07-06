@@ -18,6 +18,7 @@ import type { CouchState } from './couch-state';
 // content already matches is skipped, so the vault<->couch<->git loop converges.
 
 const DEFAULT_PAGE = 200; // _changes page size so a big feed never lands in one response
+const SUPPRESS_MS = 200; // vault 'modify' fires async after our write; hold the echo guard past it
 const ok2xx = (status: number): boolean => status >= 200 && status < 300;
 
 export interface CouchSyncConfig {
@@ -125,6 +126,7 @@ export class CouchSync {
   // Live push (sync-on-save): a failure queues the path so the next tick retries it, and a
   // success clears any prior queue entry. Never throws (the vault event handler is void).
   async pushFileLive(path: string): Promise<void> {
+    await this.state.dequeueDelete(path); // latest intent is a write - cancel any queued delete
     try {
       await this.pushFile(path);
       await this.state.dequeue(path);
@@ -134,15 +136,56 @@ export class CouchSync {
     }
   }
 
+  // Live delete: a failed DELETE (409 stale rev / 401 / 5xx) queues the path so the next tick
+  // retries it - never swallowed (a swallowed delete lets pullOnce resurrect the file). Never
+  // throws (the vault event handler is void), so the fire-and-forget caller stays safe.
   async removeFile(path: string): Promise<void> {
-    const cur = await this.getDoc(fileId(path));
-    if (cur?._rev) {
-      await this.req(`/${encodeURIComponent(fileId(path))}?rev=${encodeURIComponent(cur._rev)}`, {
-        method: 'DELETE',
-      });
-      await this.state.dropRev(path);
-      this.log(`delete ${path}`);
+    await this.state.dequeue(path); // latest intent is a delete - cancel any queued push
+    try {
+      await this.deleteFile(path);
+      await this.state.dequeueDelete(path);
+    } catch (e) {
+      await this.state.enqueueDelete(path);
+      this.log(`delete ${path} failed, queued: ${(e as Error).message}`);
     }
+  }
+
+  // Delete the file doc, status-checked so a rejected DELETE throws (caller re-queues) instead
+  // of dropping the rev. A doc already absent on the server is an idempotent success; the rev
+  // is dropped only once the doc is confirmed gone (deleted here or already absent).
+  private async deleteFile(path: string): Promise<void> {
+    const id = fileId(path);
+    const rev = await this.currentRev(id, path);
+    if (rev !== null) await this.deleteWithRetry(id, path, rev);
+    await this.state.dropRev(path);
+  }
+
+  // DELETE against `rev`; a 409 (stale rev) re-reads the fresh rev and retries once. A doc that
+  // vanished between the read and the delete is an idempotent success; any other non-2xx throws.
+  private async deleteWithRetry(id: string, path: string, rev: string): Promise<void> {
+    let del = await this.deleteRev(id, rev);
+    if (del.status === 409) {
+      const fresh = await this.currentRev(id, path);
+      if (fresh === null) return; // doc gone -> idempotent success
+      del = await this.deleteRev(id, fresh);
+    }
+    if (!ok2xx(del.status)) throw new Error(`couch delete ${del.status} for ${path}`);
+    this.log(`delete ${path}`);
+  }
+
+  // The server _rev for a file doc, or null if absent (404). A non-404 non-2xx read throws so
+  // the delete is re-queued rather than mistaken for "already gone".
+  private async currentRev(id: string, path: string): Promise<string | null> {
+    const got = await this.req(`/${encodeURIComponent(id)}`);
+    if (got.status === 404) return null;
+    if (!ok2xx(got.status)) throw new Error(`couch delete read ${got.status} for ${path}`);
+    return (got.json as FileDoc | null)?._rev ?? null;
+  }
+
+  private deleteRev(id: string, rev: string): Promise<{ status: number; json: unknown }> {
+    return this.req(`/${encodeURIComponent(id)}?rev=${encodeURIComponent(rev)}`, {
+      method: 'DELETE',
+    });
   }
 
   async pushAll(): Promise<void> {
@@ -160,6 +203,10 @@ export class CouchSync {
         const r = await this.req(
           `/_changes?since=${encodeURIComponent(since)}&include_docs=true&style=all_docs&limit=${limit}`
         );
+        // A non-2xx feed (403 channel disabled / 404 db gone / 5xx) is a real failure, not an
+        // empty page: throw so tick() logs it and the cursor is NOT advanced (401 already
+        // re-minted once in req). Silently returning [] would mask a broken sync.
+        if (!ok2xx(r.status)) throw new Error(`couch pull _changes ${r.status}`);
         const body = r.json as {
           results?: Array<{ id: string; deleted?: boolean; doc?: FileDoc }>;
           last_seq?: string;
@@ -195,7 +242,7 @@ export class CouchSync {
       try {
         await this.vault.modify(af, body);
       } finally {
-        window.setTimeout(() => this.suppress.delete(path), 200);
+        window.setTimeout(() => this.suppress.delete(path), SUPPRESS_MS);
       }
       this.log(`pull ${path} (modify)`);
     } else {
@@ -207,7 +254,7 @@ export class CouchSync {
       try {
         await this.vault.create(path, body);
       } finally {
-        window.setTimeout(() => this.suppress.delete(path), 200);
+        window.setTimeout(() => this.suppress.delete(path), SUPPRESS_MS);
       }
       this.log(`pull ${path} (create)`);
     }
@@ -226,6 +273,14 @@ export class CouchSync {
         /* keep queued for the next tick */
       }
     }
+    for (const path of this.state.pendingDeletePaths()) {
+      try {
+        await this.deleteFile(path);
+        await this.state.dequeueDelete(path);
+      } catch {
+        /* keep queued for the next tick */
+      }
+    }
   }
 
   async tick(): Promise<void> {
@@ -238,6 +293,8 @@ export class CouchSync {
   }
 
   async syncNow(): Promise<void> {
+    // pushAll first-syncs a non-empty local vault while the server git->couch seed is unwired;
+    // safe (no OOM/timeout) because the push rev-cache skips already-converged files.
     await this.pushAll();
     await this.pullOnce();
   }

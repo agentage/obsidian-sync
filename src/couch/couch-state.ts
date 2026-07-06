@@ -2,9 +2,10 @@ import type { CouchMemoryState } from '../settings';
 
 // Per-(host, memory) sync state, persisted through the plugin's saveData/loadData (the
 // same channel settings use). Holds the resumable pull cursor (so a reload does not re-pull
-// from seq 0), the path -> content-rev map (so an unchanged push skips the network), and the
-// pending-push set (paths whose live push failed, retried on the next tick). Every mutation
-// persists so the state survives a reload; a no-op mutation skips the write.
+// from seq 0), the path -> content-rev map (so an unchanged push skips the network), the
+// pending-push set (paths whose live push failed), and the pending-delete set (paths whose
+// live DELETE failed) - both retried on the next tick. Every mutation persists so the state
+// survives a reload; a no-op mutation skips the write.
 
 export type LoadCouchState = () => CouchMemoryState | undefined;
 export type SaveCouchState = (state: CouchMemoryState) => Promise<void>;
@@ -13,6 +14,7 @@ export class CouchState {
   private cursor: string;
   private readonly revs: Map<string, string>;
   private readonly pending: Set<string>;
+  private readonly pendingDeletes: Set<string>;
 
   constructor(
     load: LoadCouchState,
@@ -22,6 +24,7 @@ export class CouchState {
     this.cursor = s.cursor ?? '0';
     this.revs = new Map(Object.entries(s.revs ?? {}));
     this.pending = new Set(s.pending ?? []);
+    this.pendingDeletes = new Set(s.pendingDeletes ?? []);
   }
 
   getCursor(): string {
@@ -57,11 +60,24 @@ export class CouchState {
     if (this.pending.delete(path)) await this.persist();
   }
 
+  pendingDeletePaths(): string[] {
+    return [...this.pendingDeletes];
+  }
+  async enqueueDelete(path: string): Promise<void> {
+    if (this.pendingDeletes.has(path)) return;
+    this.pendingDeletes.add(path);
+    await this.persist();
+  }
+  async dequeueDelete(path: string): Promise<void> {
+    if (this.pendingDeletes.delete(path)) await this.persist();
+  }
+
   private async persist(): Promise<void> {
     await this.save({
       cursor: this.cursor,
       revs: Object.fromEntries(this.revs),
       pending: [...this.pending],
+      pendingDeletes: [...this.pendingDeletes],
     });
   }
 }

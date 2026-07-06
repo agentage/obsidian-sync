@@ -64,8 +64,8 @@ export class CouchTokenClient {
     const bearer = await this.getBearer();
     if (!bearer) throw new Error('couch-token: not signed in');
     const res = await this.post(this.tokenUrl, JSON.stringify({ memory: this.memory }), bearer);
-    // 401 here = the auth service rejected the OAuth bearer (known server gap until the
-    // parallel web PR lands OAuth-bearer acceptance on /account/couch-token).
+    // 401 = the bearer was genuinely rejected (expired/revoked); web#399 landed OAuth-bearer
+    // acceptance on /account/couch-token, so this is no longer a known server gap.
     if (res.status === 401) throw new Error('couch-token: unauthorized (OAuth bearer rejected)');
     if (res.status < 200 || res.status >= 300) throw new Error(`couch-token: HTTP ${res.status}`);
     const data = parseCouchToken(res.json);

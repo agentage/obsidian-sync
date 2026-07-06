@@ -84,6 +84,15 @@ const makeSync = (
     state
   );
 
+const fileDoc = (path: string, rev: string) => ({
+  _id: `f:${path}`,
+  _rev: rev,
+  type: 'file',
+  path,
+  size: 1,
+  leaves: [],
+});
+
 const changesUrls = (): string[] =>
   mockRequestUrl.mock.calls
     .map((c) => (c[0] as RequestUrlParam).url)
@@ -104,43 +113,159 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-describe('fix 1 - a missing leaf never truncates the note', () => {
-  it('aborts the pull, leaves the file untouched, and does not advance the cursor', async () => {
-    const vault = new FakeVault({ 'notes/a.md': 'ORIGINAL' });
+describe('unchanged pushAll performs zero HTTP', () => {
+  it('skips the network entirely on the second pushAll when nothing changed', async () => {
+    const vault = new FakeVault({ 'notes/n.md': 'X' });
     const state = new CouchState(
       () => undefined,
       async () => {}
     );
     const couch = makeSync(vault, state);
-    handler = (url) => {
-      if (url.includes('/_changes'))
-        return res(200, {
-          results: [
-            {
-              id: 'f:notes/a.md',
-              doc: {
-                _id: 'f:notes/a.md',
-                type: 'file',
-                path: 'notes/a.md',
-                size: 5,
-                leaves: ['h:AAA', 'h:BBB'],
-              },
-            },
-          ],
-          last_seq: '3',
-        });
-      if (url.includes('h%3AAAA')) return res(200, { _id: 'h:AAA', _rev: '1-x', data: 'hello' });
-      return res(404, {}); // h:BBB (and anything else) is missing
+    handler = (url, method) => {
+      if (url.includes('_bulk_docs')) return res(200, []);
+      if (url.includes('f%3A') && method === 'PUT') return res(200, { ok: true });
+      return res(404, {}); // f: GET -> not on server yet
     };
 
-    await expect(couch.pullOnce()).rejects.toThrow('missing leaf');
-    expect(vault.modifyCalls).toBe(0);
-    expect(vault.content('notes/a.md')).toBe('ORIGINAL');
-    expect(state.getCursor()).toBe('0'); // cursor NOT advanced -> next tick retries
+    await couch.pushAll();
+    expect(mockRequestUrl.mock.calls.length).toBeGreaterThan(0);
+
+    mockRequestUrl.mockClear();
+    await couch.pushAll();
+    expect(mockRequestUrl).not.toHaveBeenCalled();
   });
 });
 
-describe('fix 2 - resumable, paged pull cursor', () => {
+describe('a failed live push is queued and retried on the next tick', () => {
+  it('queues the path on a network error, then flushes it successfully on tick()', async () => {
+    const vault = new FakeVault({ 'notes/n.md': 'X' });
+    const state = new CouchState(
+      () => undefined,
+      async () => {}
+    );
+    const couch = makeSync(vault, state);
+
+    handler = () => {
+      throw new Error('network down');
+    };
+    await couch.pushFileLive('notes/n.md');
+    expect(state.pendingPaths()).toEqual(['notes/n.md']);
+
+    handler = (url, method) => {
+      if (url.includes('/_changes')) return res(200, { results: [], last_seq: '0' });
+      if (url.includes('_bulk_docs')) return res(200, []);
+      if (url.includes('f%3A') && method === 'PUT') return res(200, { ok: true });
+      return res(404, {});
+    };
+    await couch.tick();
+
+    expect(state.pendingPaths()).toEqual([]);
+    const puts = mockRequestUrl.mock.calls.filter(
+      (c) => (c[0] as RequestUrlParam).method === 'PUT'
+    );
+    expect(puts.length).toBe(1);
+  });
+});
+
+describe('a couch-rejected push is queued, not silently cached', () => {
+  it('does not cache the rev on a non-2xx PUT, so the next tick retries it', async () => {
+    const vault = new FakeVault({ 'notes/n.md': 'X' });
+    const state = new CouchState(
+      () => undefined,
+      async () => {}
+    );
+    const couch = makeSync(vault, state);
+
+    handler = (url, method) => {
+      if (url.includes('_bulk_docs')) return res(200, []);
+      if (url.includes('f%3A') && method === 'PUT') return res(500, {}); // couch rejects the file doc
+      return res(404, {}); // f: GET -> not on server yet
+    };
+    await couch.pushFileLive('notes/n.md');
+    expect(state.pendingPaths()).toEqual(['notes/n.md']);
+    expect(state.revFor('notes/n.md')).toBeUndefined(); // NOT cached -> stays retryable
+
+    handler = (url, method) => {
+      if (url.includes('/_changes')) return res(200, { results: [], last_seq: '0' });
+      if (url.includes('_bulk_docs')) return res(200, []);
+      if (url.includes('f%3A') && method === 'PUT') return res(200, { ok: true });
+      return res(404, {});
+    };
+    await couch.tick();
+    expect(state.pendingPaths()).toEqual([]);
+    expect(state.revFor('notes/n.md')).toBeDefined(); // cached only after couch accepted it
+  });
+});
+
+describe('a rejected delete stays retryable', () => {
+  it('queues the path on a non-2xx DELETE, then a later tick completes it', async () => {
+    const vault = new FakeVault(); // file already gone locally
+    const state = new CouchState(
+      () => undefined,
+      async () => {}
+    );
+    await state.setRev('n.md', 'r1'); // was previously pushed -> couch holds the doc
+    const couch = makeSync(vault, state);
+
+    handler = (url, method) => {
+      if (url.includes('f%3A') && method === 'DELETE') return res(500, {}); // couch rejects it
+      if (url.includes('f%3A')) return res(200, fileDoc('n.md', '3-abc'));
+      return res(404, {});
+    };
+    await couch.removeFile('n.md');
+    expect(state.pendingDeletePaths()).toEqual(['n.md']);
+    expect(state.revFor('n.md')).toBe('r1'); // rev kept -> still known to exist on couch
+
+    handler = (url, method) => {
+      if (url.includes('/_changes')) return res(200, { results: [], last_seq: '0' });
+      if (url.includes('f%3A') && method === 'DELETE') return res(200, { ok: true });
+      if (url.includes('f%3A')) return res(200, fileDoc('n.md', '3-abc'));
+      return res(404, {});
+    };
+    await couch.tick();
+    expect(state.pendingDeletePaths()).toEqual([]);
+    expect(state.revFor('n.md')).toBeUndefined(); // dropped only after couch accepted the delete
+  });
+
+  it('re-reads the fresh rev and retries the delete on a 409', async () => {
+    const vault = new FakeVault();
+    const state = new CouchState(
+      () => undefined,
+      async () => {}
+    );
+    const couch = makeSync(vault, state);
+
+    let deleteAttempts = 0;
+    handler = (url, method) => {
+      if (url.includes('f%3A') && method === 'DELETE') {
+        deleteAttempts++;
+        return url.includes('rev=1-stale') ? res(409, {}) : res(200, { ok: true });
+      }
+      if (url.includes('f%3A'))
+        return res(200, fileDoc('n.md', deleteAttempts === 0 ? '1-stale' : '2-fresh'));
+      return res(404, {});
+    };
+    await couch.removeFile('n.md');
+    expect(deleteAttempts).toBe(2); // stale rev rejected, fresh rev accepted
+    expect(state.pendingDeletePaths()).toEqual([]);
+  });
+});
+
+describe('a locally-absent path deletes without error', () => {
+  it('treats a doc already absent on the server as an idempotent success', async () => {
+    const vault = new FakeVault();
+    const state = new CouchState(
+      () => undefined,
+      async () => {}
+    );
+    const couch = makeSync(vault, state);
+    handler = () => res(404, {}); // nothing on the server
+    await expect(couch.removeFile('gone.md')).resolves.toBeUndefined();
+    expect(state.pendingDeletePaths()).toEqual([]); // not queued
+  });
+});
+
+describe('resumable, paged pull cursor', () => {
   it('pages _changes with successive since= values and persists the cursor', async () => {
     const vault = new FakeVault();
     const b = backing();
@@ -182,86 +307,62 @@ describe('fix 2 - resumable, paged pull cursor', () => {
   });
 });
 
-describe('fix 3 - unchanged pushAll performs zero HTTP', () => {
-  it('skips the network entirely on the second pushAll when nothing changed', async () => {
-    const vault = new FakeVault({ 'notes/n.md': 'X' });
+describe('a missing leaf never truncates the note', () => {
+  it('aborts the pull, leaves the file untouched, and does not advance the cursor', async () => {
+    const vault = new FakeVault({ 'notes/a.md': 'ORIGINAL' });
     const state = new CouchState(
       () => undefined,
       async () => {}
     );
     const couch = makeSync(vault, state);
-    handler = (url, method) => {
-      if (url.includes('_bulk_docs')) return res(200, []);
-      if (url.includes('f%3A') && method === 'PUT') return res(200, { ok: true });
-      return res(404, {}); // f: GET -> not on server yet
+    handler = (url) => {
+      if (url.includes('/_changes'))
+        return res(200, {
+          results: [
+            {
+              id: 'f:notes/a.md',
+              doc: {
+                _id: 'f:notes/a.md',
+                type: 'file',
+                path: 'notes/a.md',
+                size: 5,
+                leaves: ['h:AAA', 'h:BBB'],
+              },
+            },
+          ],
+          last_seq: '3',
+        });
+      if (url.includes('h%3AAAA')) return res(200, { _id: 'h:AAA', _rev: '1-x', data: 'hello' });
+      return res(404, {}); // h:BBB (and anything else) is missing
     };
 
-    await couch.pushAll();
-    expect(mockRequestUrl.mock.calls.length).toBeGreaterThan(0);
-
-    mockRequestUrl.mockClear();
-    await couch.pushAll();
-    expect(mockRequestUrl).not.toHaveBeenCalled();
+    await expect(couch.pullOnce()).rejects.toThrow('missing leaf');
+    expect(vault.modifyCalls).toBe(0);
+    expect(vault.content('notes/a.md')).toBe('ORIGINAL');
+    expect(state.getCursor()).toBe('0'); // cursor NOT advanced -> next tick retries
   });
 });
 
-describe('fix 5 - a couch-rejected push is queued, not silently cached', () => {
-  it('does not cache the rev on a non-2xx PUT, so the next tick retries it', async () => {
-    const vault = new FakeVault({ 'notes/n.md': 'X' });
-    const state = new CouchState(
-      () => undefined,
-      async () => {}
-    );
+describe('a non-2xx pull surfaces as a failing sync', () => {
+  it('throws on a non-2xx _changes feed instead of silently succeeding', async () => {
+    const vault = new FakeVault();
+    const b = backing();
+    const state = new CouchState(b.load, b.save);
     const couch = makeSync(vault, state);
-
-    handler = (url, method) => {
-      if (url.includes('_bulk_docs')) return res(200, []);
-      if (url.includes('f%3A') && method === 'PUT') return res(500, {}); // couch rejects the file doc
-      return res(404, {}); // f: GET -> not on server yet
-    };
-    await couch.pushFileLive('notes/n.md');
-    expect(state.pendingPaths()).toEqual(['notes/n.md']);
-    expect(state.revFor('notes/n.md')).toBeUndefined(); // NOT cached -> stays retryable
-
-    handler = (url, method) => {
-      if (url.includes('/_changes')) return res(200, { results: [], last_seq: '0' });
-      if (url.includes('_bulk_docs')) return res(200, []);
-      if (url.includes('f%3A') && method === 'PUT') return res(200, { ok: true });
-      return res(404, {});
-    };
-    await couch.tick();
-    expect(state.pendingPaths()).toEqual([]);
-    expect(state.revFor('notes/n.md')).toBeDefined(); // cached only after couch accepted it
+    handler = (url) =>
+      url.includes('/_changes') ? res(403, { error: 'forbidden' }) : res(404, {});
+    await expect(couch.pullOnce()).rejects.toThrow('_changes 403');
+    expect(state.getCursor()).toBe('0'); // cursor NOT advanced
   });
-});
 
-describe('fix 4 - a failed live push is queued and retried on the next tick', () => {
-  it('queues the path on a network error, then flushes it successfully on tick()', async () => {
-    const vault = new FakeVault({ 'notes/n.md': 'X' });
+  it('tick logs a failing pull instead of throwing (fire-and-forget safe)', async () => {
+    const vault = new FakeVault();
     const state = new CouchState(
       () => undefined,
       async () => {}
     );
     const couch = makeSync(vault, state);
-
-    handler = () => {
-      throw new Error('network down');
-    };
-    await couch.pushFileLive('notes/n.md');
-    expect(state.pendingPaths()).toEqual(['notes/n.md']);
-
-    handler = (url, method) => {
-      if (url.includes('/_changes')) return res(200, { results: [], last_seq: '0' });
-      if (url.includes('_bulk_docs')) return res(200, []);
-      if (url.includes('f%3A') && method === 'PUT') return res(200, { ok: true });
-      return res(404, {});
-    };
-    await couch.tick();
-
-    expect(state.pendingPaths()).toEqual([]);
-    const puts = mockRequestUrl.mock.calls.filter(
-      (c) => (c[0] as RequestUrlParam).method === 'PUT'
-    );
-    expect(puts.length).toBe(1);
+    handler = (url) => (url.includes('/_changes') ? res(500, {}) : res(404, {}));
+    await expect(couch.tick()).resolves.toBeUndefined();
   });
 });

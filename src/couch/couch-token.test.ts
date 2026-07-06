@@ -67,7 +67,7 @@ describe('CouchTokenClient - mint + cache + refresh', () => {
     expect(post).toHaveBeenCalledTimes(3);
   });
 
-  it('throws a clear error on a 401 (the known server OAuth-bearer gap)', async () => {
+  it('throws a clear error on a 401 (bearer expired/revoked)', async () => {
     const post = vi.fn<CouchTokenPost>(async () => ({ status: 401, json: null }));
     await expect(make(post).token()).rejects.toThrow('unauthorized');
   });

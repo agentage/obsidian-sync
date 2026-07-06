@@ -50,6 +50,8 @@ export interface CouchMemoryState {
   revs?: Record<string, string>;
   /** Paths whose live push failed, retried on the next tick. */
   pending?: string[];
+  /** Paths whose live DELETE failed, retried on the next tick. */
+  pendingDeletes?: string[];
 }
 
 export const MCP_ENDPOINT = 'https://memory.agentage.io/mcp';
