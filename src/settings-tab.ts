@@ -114,50 +114,6 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
       docs.createEl('a', { text: 'how to connect', href: CONNECT_URL });
       docs.appendText('.');
     }
-
-    // ---- Experimental: CouchDB device-edge sync (dev/testing) ----
-    new Setting(containerEl).setName('CouchDB sync (experimental)').setHeading();
-    new Setting(containerEl)
-      .setName('Enable CouchDB sync')
-      .setDesc(
-        'Replicate this vault to a CouchDB the server bridge commits to git. Reload the plugin after changing.'
-      )
-      .addToggle((t) =>
-        t.setValue(s.couchEnabled).onChange((v) => {
-          s.couchEnabled = v;
-          this.touch();
-          this.display();
-        })
-      );
-    if (s.couchEnabled) {
-      new Setting(containerEl)
-        .setName('Couch endpoint')
-        .setDesc('e.g. http://localhost:5985 (dev) or https://couch.<host>')
-        .addText((t) =>
-          t.setValue(s.couchEndpoint).onChange((v) => {
-            s.couchEndpoint = v.trim();
-            this.touch();
-          })
-        );
-      new Setting(containerEl)
-        .setName('Couch database')
-        .setDesc('Per-memory db name, e.g. mem_<hash>.')
-        .addText((t) =>
-          t.setValue(s.couchDb).onChange((v) => {
-            s.couchDb = v.trim();
-            this.touch();
-          })
-        );
-      new Setting(containerEl)
-        .setName('Authorization header')
-        .setDesc('Dev: "Basic <base64(admin:password)>". Or "Bearer <jwt>".')
-        .addText((t) =>
-          t.setValue(s.couchAuthorization).onChange((v) => {
-            s.couchAuthorization = v;
-            this.touch();
-          })
-        );
-    }
   }
 
   /** Add/remove an MCP scope, then persist. */

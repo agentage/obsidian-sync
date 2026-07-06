@@ -60,10 +60,12 @@ const encodeFile = async (
 };
 
 export interface CouchSyncConfig {
-  endpoint: string; // e.g. http://localhost:5985
-  db: string; // e.g. mem_<hash>
-  authorization: string; // full header value: "Basic <b64>" (dev/admin) or "Bearer <jwt>"
+  endpoint: string; // discovered couch host, e.g. https://couch.<fqdn>
+  db: string; // discovered per-memory db name (mem_<hash>)
 }
+
+// Mints/caches the couch JWT (CouchTokenClient.token); the header is always "Bearer <jwt>".
+export type CouchAuthorize = () => Promise<string>;
 
 export class CouchSync {
   private cursor = '0';
@@ -73,6 +75,8 @@ export class CouchSync {
   constructor(
     private vault: Vault,
     private cfg: CouchSyncConfig,
+    private authorize: CouchAuthorize, // supplies a valid couch JWT (see CouchTokenClient)
+    private onUnauthorized: () => void, // drop the token cache so a 401 retry re-mints
     private log: (msg: string) => void = () => {}
   ) {}
 
@@ -83,20 +87,27 @@ export class CouchSync {
     p: string,
     init: { method?: string; body?: string } = {}
   ): Promise<{ status: number; json: unknown }> {
-    const r = await requestUrl({
-      url: this.url(p),
-      method: init.method ?? 'GET',
-      headers: { Authorization: this.cfg.authorization, 'Content-Type': 'application/json' },
-      body: init.body,
-      throw: false,
-    });
-    let json: unknown = null;
-    try {
-      json = r.json;
-    } catch {
-      /* non-JSON */
-    }
-    return { status: r.status, json };
+    const send = async (): Promise<{ status: number; json: unknown }> => {
+      const jwt = await this.authorize();
+      const r = await requestUrl({
+        url: this.url(p),
+        method: init.method ?? 'GET',
+        headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+        body: init.body,
+        throw: false,
+      });
+      let json: unknown = null;
+      try {
+        json = r.json;
+      } catch {
+        /* non-JSON */
+      }
+      return { status: r.status, json };
+    };
+    const out = await send();
+    if (out.status !== 401) return out;
+    this.onUnauthorized(); // JWT expired/rejected -> re-mint and retry once
+    return send();
   }
 
   private async getDoc(id: string, rev?: string): Promise<FileDoc | (LeafDoc & FileDoc) | null> {

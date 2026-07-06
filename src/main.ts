@@ -27,11 +27,12 @@ import { createAuthJsonWriter, readAuthJsonState } from './auth/auth-json';
 import { startLoopbackServer } from './auth/loopback-server';
 import type { HttpPost } from './auth/oauth';
 import type { GetJson } from './auth/discovery';
-import { HostResolver, buildRepoUrl } from './resolve-host';
+import { HostResolver, buildRepoUrl, channelForVault, type SyncResolution } from './resolve-host';
 import { openMemoryChooser } from './memory-chooser';
 import { openActionsMenu, type PluginAction } from './actions-menu';
 import { openSyncPreview, type SyncPreview } from './sync-preview-modal';
-import { CouchSync } from './couch/couch-sync';
+import { CouchSync, type CouchAuthorize } from './couch/couch-sync';
+import { CouchTokenClient, type CouchTokenPost } from './couch/couch-token';
 
 // Single-host: every origin derives from SITE_FQDN. Defaults to prod; the
 // AGENTAGE_SITE_FQDN env var (desktop only, same pattern as AGENTAGE_CONFIG_DIR)
@@ -94,7 +95,12 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   // if the OS keyring (secretStorage) is unavailable; persisted via secretStorage +
   // ~/.agentage/auth.json. Hydrated from auth.json on desktop at load.
   private readonly secretCache = new Map<string, string>();
-  private couch?: CouchSync; // experimental CouchDB sync channel (dev/testing)
+  // Couch channel (discovery-driven): one live controller per couch-channel memory, rebuilt
+  // on a memory switch. Undefined until a resolved memory advertises the couch channel.
+  private couch?: CouchSync;
+  private couchMemory?: string;
+  private couchWired = false;
+  private couchTokenPost!: CouchTokenPost;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -135,62 +141,80 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       callback: () => this.chooseMemory(),
     });
     this.addCommand({ id: 'open-menu', name: 'Open menu', callback: () => this.openActions() });
-    this.addCommand({
-      id: 'couch-sync-now',
-      name: 'CouchDB: sync now (experimental)',
-      callback: () =>
-        this.couch
-          ? void this.couch.syncNow().then(() => new Notice('Agentage Couch: synced'))
-          : new Notice('Agentage Couch: not enabled (Settings → CouchDB sync)'),
-    });
-    this.startCouchSync();
     // Already signed in with a memory at startup -> sync silently (no popup every launch).
     this.autoSyncOnReady(false);
   }
 
-  // Experimental CouchDB device-edge channel (the server bridge commits couch -> git).
-  // Off unless enabled + configured in settings; never touches the git sync path.
-  private startCouchSync(): void {
-    const s = this.settings;
-    if (!s.couchEnabled || !s.couchEndpoint || !s.couchDb || !s.couchAuthorization) return;
-    const couch = new CouchSync(
-      this.app.vault,
-      { endpoint: s.couchEndpoint, db: s.couchDb, authorization: s.couchAuthorization },
-      (m) => console.debug('[Agentage Couch]', m)
-    );
-    this.couch = couch;
-    void couch.syncNow();
+  // Live replication for the couch channel: push on md edits, pull on an interval. Registered
+  // ONCE (Obsidian ties registerEvent/registerInterval to unload); handlers delegate to the
+  // current per-memory controller, so a memory switch repoints without re-registering.
+  private wireCouchEvents(): void {
+    if (this.couchWired) return;
+    this.couchWired = true;
     const onMd = (cb: (path: string) => void) => (f: unknown) => {
       if (f instanceof TFile && f.extension === 'md') cb(f.path);
     };
     this.registerEvent(
       this.app.vault.on(
         'modify',
-        onMd((p) => void couch.pushFile(p))
+        onMd((p) => void this.couch?.pushFile(p))
       )
     );
     this.registerEvent(
       this.app.vault.on(
         'create',
-        onMd((p) => void couch.pushFile(p))
+        onMd((p) => void this.couch?.pushFile(p))
       )
     );
     this.registerEvent(
       this.app.vault.on(
         'delete',
-        onMd((p) => void couch.removeFile(p))
+        onMd((p) => void this.couch?.removeFile(p))
       )
     );
     this.registerEvent(
       this.app.vault.on('rename', (f, oldPath) => {
         if (f instanceof TFile && f.extension === 'md') {
-          void couch.removeFile(oldPath);
-          void couch.pushFile(f.path);
+          void this.couch?.removeFile(oldPath);
+          void this.couch?.pushFile(f.path);
         }
       })
     );
-    this.registerInterval(window.setInterval(() => void couch.pullOnce(), 2000));
-    new Notice('Agentage CouchDB sync started (experimental)');
+    this.registerInterval(window.setInterval(() => void this.couch?.pullOnce(), 2000));
+  }
+
+  /** Sync a couch-channel memory: discovery already resolved endpoint/db/tokenUrl; mint the
+   * per-memory JWT on demand (cached, re-minted on expiry/401) and replicate the thin-client
+   * doc model against it. One live controller per memory; the server bridge commits couch -> git. */
+  private async couchSyncNow(
+    ch: { endpoint: string; db: string; tokenUrl: string },
+    memory: string
+  ): Promise<{ ok: boolean; message: string }> {
+    if (this.couchMemory !== memory || !this.couch) {
+      const tokenClient = new CouchTokenClient(
+        ch.tokenUrl,
+        memory,
+        this.couchTokenPost,
+        () => this.auth.getValidToken(),
+        () => Date.now()
+      );
+      const authorize: CouchAuthorize = () => tokenClient.token();
+      this.couch = new CouchSync(
+        this.app.vault,
+        { endpoint: ch.endpoint, db: ch.db },
+        authorize,
+        () => tokenClient.invalidate(),
+        (m) => console.debug('[Agentage Couch]', m)
+      );
+      this.couchMemory = memory;
+      this.wireCouchEvents();
+    }
+    try {
+      await this.couch.syncNow();
+      return { ok: true, message: `${memory}: couch synced` };
+    } catch (e) {
+      return { ok: false, message: (e as Error).message };
+    }
   }
 
   private buildAuth(): void {
@@ -282,6 +306,18 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       },
       () => Date.now()
     );
+    // Mint the per-memory couch JWT: POST the plugin's OAuth bearer to the resolved
+    // couch_token_url; the auth service is the sole minter (CouchTokenClient caches it).
+    this.couchTokenPost = async (url, body, bearer) => {
+      const res = await requestUrl({
+        url,
+        method: 'POST',
+        headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' },
+        body,
+        throw: false,
+      });
+      return { status: res.status, json: safeJson(res.text) };
+    };
   }
 
   private setStatusBar(s: SyncStatus, msg?: string): void {
@@ -574,16 +610,24 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     }
     let syncedVault = chosen || this.vaultNameOf();
     if (managed) {
+      let res: SyncResolution;
       try {
-        const res = await this.resolver.resolve(token);
-        syncedVault = chosen;
-        remote = buildRepoUrl(res.gitEndpoint, syncedVault);
+        res = await this.resolver.resolve(token);
       } catch (e) {
         return {
           ok: false,
           message: `Couldn't reach the agentage sync host: ${(e as Error).message}`,
         };
       }
+      syncedVault = chosen;
+      // Exactly one channel per memory: a resolution that advertises this memory on the couch
+      // channel routes to the couch controller; every other memory stays on the git path.
+      const ch = channelForVault(res, syncedVault);
+      if (ch.channel === 'couch') {
+        this.lastVault = syncedVault;
+        return this.couchSyncNow(ch, syncedVault);
+      }
+      remote = buildRepoUrl(res.gitEndpoint, syncedVault);
     }
     this.lastVault = syncedVault; // so "Open dashboard" points at the vault we actually synced
     const ctrl = this.buildController();
@@ -612,7 +656,12 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     const managed = !remote || remote === 'agentage';
     const chosen = normalizeVaultName(this.settings.vault);
     if (managed && !chosen) return null;
-    if (managed) remote = buildRepoUrl((await this.resolver.resolve(token)).gitEndpoint, chosen);
+    if (managed) {
+      const res = await this.resolver.resolve(token);
+      // Couch memories have no git remote to preview: syncNow routes them to the couch controller.
+      if (channelForVault(res, chosen).channel === 'couch') return null;
+      remote = buildRepoUrl(res.gitEndpoint, chosen);
+    }
     return remote;
   }
 

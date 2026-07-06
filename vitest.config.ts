@@ -7,11 +7,13 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
-      // Excluded: Obsidian-runtime files (App/TFile/PluginSettingTab/setIcon),
-      // the node-only test git server helper, and type/test files. The pure engine
-      // (merge-note, stream-utils, resolve-host, vaults-config), the DI git-client
-      // (against a real local git server), and the requestUrl HttpClient adapter
-      // (against a mocked requestUrl) ARE unit/integration tested.
+      // Excluded: Obsidian-runtime files (App/TFile/PluginSettingTab/setIcon/Vault +
+      // window/crypto.subtle), the node-only test git server helper, and type/test files.
+      // The pure engine (merge-note, stream-utils, resolve-host, vaults-config), the couch
+      // discovery + token flow (resolve-host, couch-token), the DI git-client (against a
+      // real local git server), and the requestUrl HttpClient adapter (against a mocked
+      // requestUrl) ARE unit/integration tested. couch-sync is the Vault/requestUrl-coupled
+      // replication driver (same bucket as vault-fs); its doc model matches the server bridge.
       exclude: [
         '**/*.test.ts',
         '**/*.types.ts',
@@ -21,6 +23,7 @@ export default defineConfig({
         'src/actions-menu.ts',
         'src/git/vault-fs.ts',
         'src/git/git-test-server.ts',
+        'src/couch/couch-sync.ts',
       ],
       thresholds: { branches: 70, functions: 70, lines: 70, statements: 70 },
     },
