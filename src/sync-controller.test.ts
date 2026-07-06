@@ -162,3 +162,60 @@ describe('sync-controller (R10/R12 lifecycle + R15 conflict surfacing)', () => {
     expect(seen).toContain('error');
   });
 });
+
+describe('preview (non-mutating both-way counts for the sync popup)', () => {
+  it('reports firstSync when there is no local repo yet, without creating one', async () => {
+    const A = dir('A');
+    fs.writeFileSync(path.join(A, 'note.md'), 'hi\n');
+    expect(await controllerFor(A).preview(opts())).toEqual({
+      incoming: 0,
+      outgoing: 0,
+      firstSync: true,
+    });
+    expect(fs.existsSync(path.join(A, '.git'))).toBe(false);
+  });
+
+  it('counts outgoing local changes + incoming remote files, without syncing anything', async () => {
+    const A = dir('A');
+    fs.writeFileSync(path.join(A, 'a.md'), 'a\n');
+    await controllerFor(A).syncNow(opts()); // seed the remote
+    const B = dir('B');
+    await controllerFor(B).syncNow(opts()); // clone at the seed commit
+
+    fs.writeFileSync(path.join(A, 'a.md'), 'a v2\n'); // remote gains: a.md modified...
+    fs.writeFileSync(path.join(A, 'b.md'), 'b\n'); // ...and b.md added
+    await controllerFor(A).syncNow(opts());
+
+    fs.writeFileSync(path.join(B, 'c.md'), 'c\n'); // local add
+    fs.rmSync(path.join(B, 'a.md')); // local delete
+    const p = await controllerFor(B).preview(opts());
+    expect(p).toEqual({ incoming: 2, outgoing: 2, firstSync: false });
+    // Non-mutating: nothing was committed/pulled, so a re-preview sees the same counts.
+    expect(await controllerFor(B).preview(opts())).toEqual(p);
+    expect(fs.existsSync(path.join(B, 'b.md'))).toBe(false);
+  });
+
+  it('reports zero both ways right after a full sync', async () => {
+    const A = dir('A');
+    fs.writeFileSync(path.join(A, 'a.md'), 'a\n');
+    await controllerFor(A).syncNow(opts());
+    expect(await controllerFor(A).preview(opts())).toEqual({
+      incoming: 0,
+      outgoing: 0,
+      firstSync: false,
+    });
+  });
+
+  it('previews against an empty remote as outgoing-only (no incoming)', async () => {
+    const A = dir('A');
+    fs.writeFileSync(path.join(A, 'a.md'), 'a\n');
+    await controllerFor(A).syncNow(opts());
+    execFileSync('git', ['init', '--bare', '-q', '-b', 'main', path.join(root, 'fresh.git')]);
+    fs.writeFileSync(path.join(A, 'b.md'), 'b\n');
+    expect(await controllerFor(A).preview(opts(srv.url('fresh.git')))).toEqual({
+      incoming: 0,
+      outgoing: 1,
+      firstSync: false,
+    });
+  });
+});

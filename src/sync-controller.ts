@@ -216,8 +216,41 @@ export function createSyncController(deps: SyncControllerDeps) {
     return { action: 'synced', committed: staged > 0, pushed: true, conflicted: [] };
   }
 
+  // Read-only count of local working changes (what a sync would commit + push).
+  async function countLocalChanges(ctx: RepoCtx): Promise<number> {
+    const matrix = await deps.client.statusMatrix(ctx);
+    let n = 0;
+    for (const row of matrix) {
+      const [filepath, head, workdir] = row as [string, number, number, number];
+      if (skip(filepath)) continue;
+      if ((workdir === 0 && head === 1) || workdir !== head) n++; // deleted | added/modified
+    }
+    return n;
+  }
+
+  // Non-mutating preview for the sync popup: how many files go up (outgoing = local
+  // working changes) and how many come down (incoming = files differing between local
+  // HEAD and the fetched remote HEAD). `firstSync` when there is no local repo yet.
+  async function preview(
+    o: SyncOpts
+  ): Promise<{ incoming: number; outgoing: number; firstSync: boolean }> {
+    const ctx = ctxOf(o);
+    if (!(await hasGit())) return { incoming: 0, outgoing: 0, firstSync: true };
+    const outgoing = await countLocalChanges(ctx);
+    let incoming = 0;
+    if (await deps.client.remoteHasRef(ctx)) {
+      const remoteOid = await deps.client.remoteOid(ctx); // fetches + resolves origin/<ref>
+      const localOid = await localHead(ctx);
+      if (remoteOid && localOid && remoteOid !== localOid) {
+        incoming = await deps.client.changedFileCount(ctx, localOid, remoteOid);
+      }
+    }
+    return { incoming, outgoing, firstSync: false };
+  }
+
   return {
     isRunning: () => running,
+    preview,
     async syncNow(o: SyncOpts): Promise<SyncResult> {
       if (running) throw new Error('sync already running');
       running = true;

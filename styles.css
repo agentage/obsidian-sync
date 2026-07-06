@@ -127,3 +127,16 @@
 .ams-sb-text:empty {
   display: none;
 }
+
+/* Post-sign-in sync popup: the both-way file counts. */
+.ams-sync-counts {
+  margin: 0.6em 0;
+  padding: 0.7em 0.9em;
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+  font-size: var(--font-ui-medium);
+  line-height: 1.7;
+}
+.ams-sync-counts > div {
+  font-variant-numeric: tabular-nums;
+}

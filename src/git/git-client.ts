@@ -8,6 +8,7 @@ import git, {
   type FsClient,
   type HttpClient,
   type MergeDriverCallback,
+  type WalkerEntry,
 } from 'isomorphic-git';
 
 export interface GitClientDeps {
@@ -180,6 +181,29 @@ export function createGitClient({ fs, http }: GitClientDeps, mergeDriver: MergeD
       } catch {
         return false; // unreachable/empty → treat as "no ref"; a later push surfaces real errors
       }
+    },
+
+    // Count of files (blobs) that differ between two commit oids - added, removed, or
+    // modified. Non-mutating; the sync preview uses it to show how many files a pull will
+    // bring in (incoming). git.walk descends both trees in lockstep; directories recurse.
+    async changedFileCount(c: RepoCtx, oidA: string, oidB: string): Promise<number> {
+      const out = await wrapFS(
+        git.walk({
+          ...base(c),
+          trees: [git.TREE({ ref: oidA }), git.TREE({ ref: oidB })],
+          map: async (filepath: string, entries: Array<WalkerEntry | null>) => {
+            if (filepath === '.') return undefined;
+            const [a, b] = entries;
+            const ta = a ? await a.type() : undefined;
+            const tb = b ? await b.type() : undefined;
+            if (ta === 'tree' || tb === 'tree') return undefined; // dir node; walk recurses in
+            const oa = a ? await a.oid() : null;
+            const ob = b ? await b.oid() : null;
+            return oa === ob ? undefined : filepath;
+          },
+        })
+      );
+      return (out as unknown[]).flat(Infinity).filter(Boolean).length;
     },
   };
   return client;
