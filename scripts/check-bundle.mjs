@@ -25,8 +25,11 @@ const src = readFileSync(BUNDLE, 'utf8');
 const NODE_BUILTINS =
   '(?:fs/promises|fs|path|os|crypto|net|http|https|child_process|module|url|stream|util|events|tls|zlib|dns)';
 
-// Lazy, desktop-guarded fs access — the only node builtins allowed in the bundle.
-const ALLOWED = new Set(['node:fs/promises', 'node:os', 'node:path']);
+// Lazy, desktop-guarded node access - the only builtins allowed in the bundle. fs/os/path
+// back the ~/.agentage config mirror; http backs the desktop loopback OAuth listener
+// (auth/loopback-server.ts). All four are imported lazily behind `Platform.isDesktopApp`,
+// so mobile never evaluates them.
+const ALLOWED = new Set(['node:fs/promises', 'node:os', 'node:path', 'node:http']);
 
 // (1) No dynamic import() of a node builtin — the renderer CORS-blocks it.
 const dynImports = [

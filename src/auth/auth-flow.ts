@@ -24,6 +24,15 @@ import type { AuthStore } from './token-store';
 
 export const CALLBACK_ACTION = 'agentage-memory-cb';
 
+// A running localhost redirect listener (RFC 8252). Desktop main supplies the factory;
+// when present, sign-in uses loopback instead of the `obsidian://` deep link (which snap/
+// flatpak Obsidian drop). `waitForCode` resolves with the OAuth query params.
+export interface LoopbackHandle {
+  redirectUri: string;
+  waitForCode: Promise<Record<string, string>>;
+  close: () => void;
+}
+
 export interface AuthFlowDeps {
   store: AuthStore;
   post: HttpPost; // requestUrl POST (main) / mock (tests)
@@ -33,6 +42,7 @@ export interface AuthFlowDeps {
   openExternal: (url: string) => void;
   now: () => number;
   onChange?: () => void;
+  loopback?: () => Promise<LoopbackHandle>; // desktop: localhost redirect; absent → obsidian://
 }
 
 export interface AuthFlow {
@@ -60,9 +70,63 @@ export function createAuthFlow(deps: AuthFlowDeps): AuthFlow {
     return id;
   }
 
+  // Shared tail of both redirect paths: exchange the code (against the SAME redirect_uri the
+  // authorize request used) → persist → announce. Throwing is the caller's to surface.
+  async function exchangeAndStore(
+    ep: OAuthEndpoints,
+    clientId: string,
+    code: string,
+    verifier: string,
+    redirectUri: string
+  ): Promise<void> {
+    const tokens = await exchangeAuthCode(
+      deps.post,
+      ep.tokenEndpoint,
+      clientId,
+      code,
+      verifier,
+      deps.now(),
+      redirectUri
+    );
+    await deps.store.save(tokens);
+    deps.notify('Signed in to Agentage.');
+    deps.onChange?.();
+  }
+
+  // Desktop loopback (RFC 8252): bind localhost, DCR with the exact bound redirect, open the
+  // browser, then await the callback ON that listener - no OS protocol handler in the loop.
+  async function signInViaLoopback(ep: OAuthEndpoints): Promise<void> {
+    const lb = await deps.loopback!();
+    try {
+      const clientId = await registerClient(deps.post, ep.registrationEndpoint, lb.redirectUri);
+      deps.store.setClientId(clientId);
+      const verifier = generateCodeVerifier();
+      const state = generateState();
+      const codeChallenge = await deriveCodeChallenge(verifier);
+      deps.openExternal(
+        buildAuthorizeUrl({
+          authorizationEndpoint: ep.authorizationEndpoint,
+          clientId,
+          redirectUri: lb.redirectUri,
+          codeChallenge,
+          state,
+        })
+      );
+      deps.notify('Opening agentage sign-in in your browser…');
+      const result = parseCallbackParams(await lb.waitForCode);
+      if ('error' in result) return deps.notify(`Sign-in failed: ${result.error}`);
+      if (result.state !== state) return deps.notify('Sign-in failed: state mismatch.');
+      await exchangeAndStore(ep, clientId, result.code, verifier, lb.redirectUri);
+    } finally {
+      lb.close();
+    }
+  }
+
   const startSignIn = async (): Promise<void> => {
     try {
       const ep = await ensureEndpoints();
+      if (deps.loopback) return await signInViaLoopback(ep);
+      // Fallback: `obsidian://` custom scheme + the protocol handler (handleCallback).
       const clientId = await ensureClientId(ep);
       const verifier = generateCodeVerifier();
       const state = generateState();
@@ -95,18 +159,9 @@ export function createAuthFlow(deps: AuthFlowDeps): AuthFlow {
       const ep = await ensureEndpoints();
       const clientId = deps.store.getClientId();
       if (!clientId) return deps.notify('Sign-in failed: missing client registration.');
-      const tokens = await exchangeAuthCode(
-        deps.post,
-        ep.tokenEndpoint,
-        clientId,
-        result.code,
-        pending.verifier,
-        deps.now()
-      );
-      await deps.store.save(tokens);
+      const verifier = pending.verifier;
       pending = null;
-      deps.notify('Signed in to Agentage.');
-      deps.onChange?.();
+      await exchangeAndStore(ep, clientId, result.code, verifier, REDIRECT_URI);
     } catch (e) {
       deps.notify(`Sign-in failed: ${(e as Error).message}`);
     }
