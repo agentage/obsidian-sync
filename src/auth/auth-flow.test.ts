@@ -202,4 +202,79 @@ describe('auth-flow', () => {
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('state mismatch'));
     expect(close).toHaveBeenCalled();
   });
+
+  // onSignedIn is the seam main hooks the post-sign-in sync popup on. It must fire exactly
+  // once on EITHER sign-in path (the loopback path never hits the obsidian:// handler #78
+  // used) and never on sign-out/expiry - else the popup is missed or fires spuriously.
+  describe('onSignedIn (post-sign-in popup seam)', () => {
+    it('fires exactly once on the obsidian:// (handleCallback) path', async () => {
+      const store = fakeStore();
+      const post = vi.fn(async (url: string) =>
+        url.includes('/register')
+          ? { status: 200, json: { client_id: 'cid' } }
+          : { status: 200, json: { access_token: 'AT', refresh_token: 'RT', expires_in: 3600 } }
+      );
+      const onSignedIn = vi.fn();
+      const { f, captured } = flow(store, post, { onSignedIn });
+      await f.startSignIn();
+      const state = new URL(captured.url!).searchParams.get('state')!;
+      await f.handleCallback({ code: 'c', state });
+      expect(onSignedIn).toHaveBeenCalledTimes(1);
+    });
+
+    it('fires exactly once on the loopback path', async () => {
+      const store = fakeStore();
+      const post = vi.fn(async (url: string) =>
+        url.includes('/register')
+          ? { status: 201, json: { client_id: 'cid' } }
+          : { status: 200, json: { access_token: 'AT', refresh_token: 'RT', expires_in: 3600 } }
+      );
+      const redirectUri = 'http://127.0.0.1:55555/callback';
+      let resolveCode!: (p: Record<string, string>) => void;
+      const waitForCode = new Promise<Record<string, string>>((r) => (resolveCode = r));
+      const onSignedIn = vi.fn();
+      const f = createAuthFlow({
+        store,
+        post,
+        getJson: async () => ({ status: 200, json: DISCOVERY }),
+        authOrigin: () => 'https://auth.x',
+        notify: vi.fn(),
+        openExternal: (url) =>
+          resolveCode({ code: 'c', state: new URL(url).searchParams.get('state')! }),
+        now: () => NOW,
+        onSignedIn,
+        loopback: async () => ({ redirectUri, waitForCode, close: vi.fn() }),
+      });
+      await f.startSignIn();
+      expect(store.load()).not.toBeNull();
+      expect(onSignedIn).toHaveBeenCalledTimes(1);
+    });
+
+    it('does NOT fire on disconnect or on a 4xx session expiry', async () => {
+      const onSignedIn = vi.fn();
+      const signedIn = fakeStore(
+        { accessToken: 'AT', refreshToken: 'RT', expiresAt: NOW - 1 },
+        'cid'
+      );
+      await flow(
+        signedIn,
+        vi.fn(async () => ({ status: 200, json: null })),
+        {
+          onSignedIn,
+        }
+      ).f.disconnect();
+      const expired = fakeStore(
+        { accessToken: 'AT', refreshToken: 'RT', expiresAt: NOW - 1 },
+        'cid'
+      );
+      await flow(
+        expired,
+        vi.fn(async () => ({ status: 400, json: { error: 'invalid_grant' } })),
+        {
+          onSignedIn,
+        }
+      ).f.getValidToken();
+      expect(onSignedIn).not.toHaveBeenCalled();
+    });
+  });
 });

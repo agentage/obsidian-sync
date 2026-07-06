@@ -42,6 +42,9 @@ export interface AuthFlowDeps {
   openExternal: (url: string) => void;
   now: () => number;
   onChange?: () => void;
+  // Fires once per successful sign-in on BOTH the loopback and obsidian:// paths (never on
+  // sign-out/expiry/startup); main hooks the post-sign-in sync popup here.
+  onSignedIn?: () => void;
   loopback?: () => Promise<LoopbackHandle>; // desktop: localhost redirect; absent → obsidian://
 }
 
@@ -91,6 +94,7 @@ export function createAuthFlow(deps: AuthFlowDeps): AuthFlow {
     await deps.store.save(tokens);
     deps.notify('Signed in to Agentage.');
     deps.onChange?.();
+    deps.onSignedIn?.(); // both sign-in paths funnel here -> popup fires exactly once per sign-in
   }
 
   // Desktop loopback (RFC 8252): bind localhost, DCR with the exact bound redirect, open the

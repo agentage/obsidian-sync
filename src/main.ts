@@ -112,10 +112,9 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     this.addSettingTab(this.settingTab);
     this.registerObsidianProtocolHandler(CALLBACK_ACTION, (params) => {
       console.debug('[Agentage Sync] OAuth callback received', { hasCode: !!params.code });
-      void this.auth.handleCallback(params).then(() => {
-        this.onAuthChanged();
-        this.autoSyncOnReady(true); // sign-in complete -> auto-sync + show the popup
-      });
+      // Re-render + the sync popup are driven by auth-flow's onChange/onSignedIn, so the
+      // loopback path (which never hits this handler) gets the popup too.
+      void this.auth.handleCallback(params);
     });
 
     // Ribbon + command open a modal action-picker (Sync now / Choose memory / dashboard).
@@ -306,6 +305,8 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       },
       now: () => Date.now(),
       onChange: () => this.onAuthChanged(),
+      // Fires on any completed sign-in (loopback OR obsidian://): auto-sync + show the popup.
+      onSignedIn: () => this.autoSyncOnReady(true),
       // RFC 8252: desktop signs in via a 127.0.0.1 listener (snap/flatpak Obsidian drop
       // obsidian:// callbacks); without the factory (mobile) auth-flow uses the deep link.
       loopback: this.isDesktop ? () => startLoopbackServer() : undefined,
