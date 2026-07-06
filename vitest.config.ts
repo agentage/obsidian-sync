@@ -10,10 +10,11 @@ export default defineConfig({
       // Excluded: Obsidian-runtime files (App/TFile/PluginSettingTab/setIcon/Vault +
       // window/crypto.subtle), the node-only test git server helper, and type/test files.
       // The pure engine (merge-note, stream-utils, resolve-host, vaults-config), the couch
-      // discovery + token flow (resolve-host, couch-token), the DI git-client (against a
-      // real local git server), and the requestUrl HttpClient adapter (against a mocked
-      // requestUrl) ARE unit/integration tested. couch-sync is the Vault/requestUrl-coupled
-      // replication driver (same bucket as vault-fs); its doc model matches the server bridge.
+      // discovery + token flow (resolve-host, couch-token), the couch doc model + persisted
+      // sync state (couch-doc, couch-state), the DI git-client (against a real local git
+      // server), and the requestUrl HttpClient adapter (against a mocked requestUrl) ARE
+      // unit/integration tested. couch-sync is the Vault/requestUrl-coupled replication driver
+      // (same bucket as vault-fs; exercised by couch-sync.test.ts); doc model matches the bridge.
       exclude: [
         '**/*.test.ts',
         '**/*.types.ts',

@@ -1,74 +1,34 @@
 import { requestUrl, TFile, type Vault } from 'obsidian';
+import {
+  contentRev,
+  encodeFile,
+  fileId,
+  leafIdsOf,
+  pathOf,
+  type FileDoc,
+  type LeafDoc,
+} from './couch-doc';
+import type { CouchState } from './couch-state';
 
-// Experimental CouchDB sync channel (thin client, the onepager's "thin client" option).
-// Replicates the vault's markdown to a per-memory CouchDB using the SAME content-addressed
-// model the server bridge expects: leaf docs h:<sha256(chunk)> + a file doc f:<path>. The
-// bridge then commits every couch edit to git. Uses Obsidian's requestUrl (no CORS, no
-// PouchDB bundle) + Web Crypto (mobile-safe, no node builtins). Echo-safe: a push/pull
-// whose content already matches is skipped, so the vault<->couch<->git loop converges.
+// CouchDB sync channel (thin client, the onepager's "thin client" option) - now THE account
+// channel for couch-flagged memories. Replicates the vault's markdown to a per-memory CouchDB
+// using the SAME content-addressed model the server bridge expects (leaf docs + a file doc);
+// the bridge then commits every couch edit to git. Uses Obsidian's requestUrl (no CORS, no
+// PouchDB bundle) + Web Crypto (mobile-safe, no node builtins). Echo-safe: a push/pull whose
+// content already matches is skipped, so the vault<->couch<->git loop converges.
 
-const CHUNK = 64 * 1024;
-// Web Crypto sha256 of the utf8 bytes - byte-identical to the server's node:crypto sha256,
-// so the leaf id (which the bridge reads to reassemble) matches exactly. The leaf _rev only
-// needs to be a deterministic 32-hex (couch rev shape); it need not match the server's md5
-// (identical content => same id; a differing rev is a harmless same-data leaf conflict).
-const sha256hex = async (s: string): Promise<string> => {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
-  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
-};
-const fileId = (p: string): string => `f:${p}`;
-const pathOf = (id: string): string => id.slice(2);
-
-const chunkBody = (b: string): string[] => {
-  if (b.length === 0) return [''];
-  const out: string[] = [];
-  for (let i = 0; i < b.length; i += CHUNK) out.push(b.slice(i, i + CHUNK));
-  return out;
-};
-
-interface LeafDoc {
-  _id: string;
-  _rev: string;
-  data: string;
-}
-interface FileDoc {
-  _id: string;
-  _rev?: string;
-  type: 'file';
-  path: string;
-  size: number;
-  leaves: string[];
-  _conflicts?: string[];
-  _deleted?: boolean;
-}
-
-const encodeFile = async (
-  path: string,
-  body: string
-): Promise<{ leaves: LeafDoc[]; fileDoc: FileDoc }> => {
-  const leaves = await Promise.all(
-    chunkBody(body).map(async (c) => {
-      const h = await sha256hex(c);
-      return { _id: `h:${h}`, _rev: `1-${h.slice(0, 32)}`, data: c };
-    })
-  );
-  const ids = leaves.map((l) => l._id);
-  return {
-    leaves,
-    fileDoc: { _id: fileId(path), type: 'file', path, size: body.length, leaves: ids },
-  };
-};
+const DEFAULT_PAGE = 200; // _changes page size so a big feed never lands in one response
 
 export interface CouchSyncConfig {
   endpoint: string; // discovered couch host, e.g. https://couch.<fqdn>
   db: string; // discovered per-memory db name (mem_<hash>)
+  pageLimit?: number; // _changes limit; defaults to DEFAULT_PAGE
 }
 
 // Mints/caches the couch JWT (CouchTokenClient.token); the header is always "Bearer <jwt>".
 export type CouchAuthorize = () => Promise<string>;
 
 export class CouchSync {
-  private cursor = '0';
   private pulling = false;
   private suppress = new Set<string>(); // paths being written by a pull (skip their push)
 
@@ -77,6 +37,7 @@ export class CouchSync {
     private cfg: CouchSyncConfig,
     private authorize: CouchAuthorize, // supplies a valid couch JWT (see CouchTokenClient)
     private onUnauthorized: () => void, // drop the token cache so a 401 retry re-mints
+    private state: CouchState, // persisted cursor + push-rev cache + pending pushes
     private log: (msg: string) => void = () => {}
   ) {}
 
@@ -116,25 +77,33 @@ export class CouchSync {
     );
     return r.status === 200 ? (r.json as FileDoc) : null;
   }
+  // Mirror the server's decodeFile: a missing leaf THROWS, never substitutes an empty chunk
+  // (which would truncate the note). The caller aborts the pull round and keeps the cursor.
   private async reassemble(fdoc: FileDoc): Promise<string> {
     const parts: string[] = [];
     for (const id of fdoc.leaves) {
       const leaf = (await this.getDoc(id)) as unknown as LeafDoc | null;
-      parts.push(leaf?.data ?? '');
+      if (!leaf || typeof leaf.data !== 'string')
+        throw new Error(`couch pull: missing leaf ${id} for ${fdoc.path}`);
+      parts.push(leaf.data);
     }
     return parts.join('');
   }
 
-  // ── push: vault -> couch ────────────────────────────────────────────────────
+  // -- push: vault -> couch --------------------------------------------------
   async pushFile(path: string): Promise<void> {
     if (this.suppress.has(path)) return; // we are mid-pull-writing this file
     const af = this.vault.getAbstractFileByPath(path);
     if (!(af instanceof TFile) || af.extension !== 'md') return;
     const body = await this.vault.read(af);
     const { leaves, fileDoc } = await encodeFile(path, body);
+    const rev = contentRev(fileDoc);
+    if (this.state.revFor(path) === rev) return; // this exact content is already pushed
     const cur = await this.getDoc(fileDoc._id);
-    if (cur && !cur._deleted && JSON.stringify(cur.leaves) === JSON.stringify(fileDoc.leaves))
-      return; // converged
+    if (cur && !cur._deleted && JSON.stringify(cur.leaves) === JSON.stringify(fileDoc.leaves)) {
+      await this.state.setRev(path, rev); // remote already converged; cache so we skip next time
+      return;
+    }
     await this.req('/_bulk_docs', {
       method: 'POST',
       body: JSON.stringify({ new_edits: false, docs: leaves }),
@@ -145,7 +114,20 @@ export class CouchSync {
       method: 'PUT',
       body: JSON.stringify(put),
     });
+    await this.state.setRev(path, rev);
     this.log(`push ${path} -> ${r.status}`);
+  }
+
+  // Live push (sync-on-save): a failure queues the path so the next tick retries it, and a
+  // success clears any prior queue entry. Never throws (the vault event handler is void).
+  async pushFileLive(path: string): Promise<void> {
+    try {
+      await this.pushFile(path);
+      await this.state.dequeue(path);
+    } catch (e) {
+      await this.state.enqueue(path);
+      this.log(`push ${path} failed, queued: ${(e as Error).message}`);
+    }
   }
 
   async removeFile(path: string): Promise<void> {
@@ -154,37 +136,48 @@ export class CouchSync {
       await this.req(`/${encodeURIComponent(fileId(path))}?rev=${encodeURIComponent(cur._rev)}`, {
         method: 'DELETE',
       });
+      await this.state.dropRev(path);
       this.log(`delete ${path}`);
     }
   }
 
   async pushAll(): Promise<void> {
-    for (const f of this.vault.getMarkdownFiles()) await this.pushFile(f.path);
+    for (const f of this.vault.getMarkdownFiles()) await this.pushFileLive(f.path);
   }
 
-  // ── pull: couch -> vault ────────────────────────────────────────────────────
+  // -- pull: couch -> vault --------------------------------------------------
   async pullOnce(): Promise<void> {
     if (this.pulling) return;
     this.pulling = true;
+    const limit = this.cfg.pageLimit ?? DEFAULT_PAGE;
     try {
-      const r = await this.req(
-        `/_changes?since=${encodeURIComponent(this.cursor)}&include_docs=true&style=all_docs`
-      );
-      const body = r.json as {
-        results?: Array<{ id: string; deleted?: boolean; doc?: FileDoc }>;
-        last_seq?: string;
-      } | null;
-      for (const ch of body?.results ?? []) {
-        if (!ch.id.startsWith('f:')) continue;
-        const path = pathOf(ch.id);
-        if (ch.deleted || ch.doc?._deleted) {
-          const af = this.vault.getAbstractFileByPath(path);
-          if (af) await this.vault.delete(af);
-          continue;
+      for (;;) {
+        const since = this.state.getCursor();
+        const r = await this.req(
+          `/_changes?since=${encodeURIComponent(since)}&include_docs=true&style=all_docs&limit=${limit}`
+        );
+        const body = r.json as {
+          results?: Array<{ id: string; deleted?: boolean; doc?: FileDoc }>;
+          last_seq?: string;
+        } | null;
+        const results = body?.results ?? [];
+        // Apply the whole page first; reassemble THROWS on a missing leaf, aborting the round
+        // before writeVault so no truncated body is written and the cursor is not advanced.
+        for (const ch of results) {
+          if (!ch.id.startsWith('f:')) continue;
+          const path = pathOf(ch.id);
+          if (ch.deleted || ch.doc?._deleted) {
+            const af = this.vault.getAbstractFileByPath(path);
+            if (af) await this.vault.delete(af);
+            await this.state.dropRev(path);
+            continue;
+          }
+          if (ch.doc) await this.writeVault(path, await this.reassemble(ch.doc));
         }
-        if (ch.doc) await this.writeVault(path, await this.reassemble(ch.doc));
+        // Page fully applied - only now advance (and persist) the cursor.
+        if (body?.last_seq != null) await this.state.setCursor(body.last_seq);
+        if (results.length < limit || body?.last_seq == null || body.last_seq === since) break;
       }
-      if (body?.last_seq) this.cursor = body.last_seq;
     } finally {
       this.pulling = false;
     }
@@ -201,19 +194,43 @@ export class CouchSync {
         window.setTimeout(() => this.suppress.delete(path), 200);
       }
       this.log(`pull ${path} (modify)`);
-      return;
+    } else {
+      const dir = path.split('/').slice(0, -1).join('/');
+      if (dir && !this.vault.getAbstractFileByPath(dir)) {
+        await this.vault.createFolder(dir).catch(() => {});
+      }
+      this.suppress.add(path);
+      try {
+        await this.vault.create(path, body);
+      } finally {
+        window.setTimeout(() => this.suppress.delete(path), 200);
+      }
+      this.log(`pull ${path} (create)`);
     }
-    const dir = path.split('/').slice(0, -1).join('/');
-    if (dir && !this.vault.getAbstractFileByPath(dir)) {
-      await this.vault.createFolder(dir).catch(() => {});
+    // Cache the applied content rev so a later push does not echo it back to couch.
+    await this.state.setRev(path, (await leafIdsOf(body)).join(','));
+  }
+
+  // Retry every queued push, then pull. The periodic tick calls this so a dropped live push
+  // is not lost. Resilient: a failing pull is logged, not thrown, so the next tick retries.
+  async flushPending(): Promise<void> {
+    for (const path of this.state.pendingPaths()) {
+      try {
+        await this.pushFile(path);
+        await this.state.dequeue(path);
+      } catch {
+        /* keep queued for the next tick */
+      }
     }
-    this.suppress.add(path);
+  }
+
+  async tick(): Promise<void> {
+    await this.flushPending();
     try {
-      await this.vault.create(path, body);
-    } finally {
-      window.setTimeout(() => this.suppress.delete(path), 200);
+      await this.pullOnce();
+    } catch (e) {
+      this.log(`pull failed (will retry): ${(e as Error).message}`);
     }
-    this.log(`pull ${path} (create)`);
   }
 
   async syncNow(): Promise<void> {
