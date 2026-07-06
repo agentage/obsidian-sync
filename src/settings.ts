@@ -1,4 +1,4 @@
-// Plugin configuration model — mirrors @agentage/memory-core's vaults.json
+// Plugin configuration model - mirrors @agentage/memory-core's vaults.json
 // (config/config.ts + contract/types.ts). One Obsidian vault == one memory-core
 // vault entry. Pure (no `obsidian` import) so it stays unit-testable.
 
@@ -14,7 +14,7 @@ export interface OriginSettings {
 }
 
 export interface AgentageMemorySettings {
-  /** The server memory (vault) this Obsidian vault syncs into — picked or created in
+  /** The server memory (vault) this Obsidian vault syncs into - picked or created in
    * settings. Empty = not chosen yet (syncNow then falls back to the first server vault). */
   vault: string;
   /** memory-core vault name (the key in vaults.json). */
@@ -30,12 +30,26 @@ export interface AgentageMemorySettings {
   mcp: McpScope[];
   /** Dir holding vaults.json (memory-core: AGENTAGE_CONFIG_DIR or ~/.agentage). */
   configDir: string;
-  /** UI only — reveal the advanced fields (not written to vaults.json). */
+  /** UI only - reveal the advanced fields (not written to vaults.json). */
   showAdvanced: boolean;
-  /** Plugin-local — the vault name last written to vaults.json, for renames. */
+  /** Plugin-local - the vault name last written to vaults.json, for renames. */
   writtenVaultName: string;
   /** Site host override for testing against dev (e.g. dev.agentage.io). Empty = env-or-prod. */
   siteFqdn: string;
+  /** Per-(host, memory) couch sync state (pull cursor + push-rev cache + pending pushes),
+   * keyed "<host>:<memory>". Plugin-local; never written to vaults.json. */
+  couchState: Record<string, CouchMemoryState>;
+}
+
+/** Persisted couch sync state for one (host, memory). All fields optional so an older
+ * data.json (or a fresh memory) hydrates to sensible defaults. */
+export interface CouchMemoryState {
+  /** Last fully-applied _changes seq; resumes the pull after a reload. */
+  cursor?: string;
+  /** path -> last pushed content rev (ordered leaf ids); skips an unchanged push. */
+  revs?: Record<string, string>;
+  /** Paths whose live push failed, retried on the next tick. */
+  pending?: string[];
 }
 
 export const MCP_ENDPOINT = 'https://memory.agentage.io/mcp';
@@ -73,6 +87,7 @@ export const DEFAULT_SETTINGS: AgentageMemorySettings = {
   showAdvanced: false,
   writtenVaultName: '',
   siteFqdn: '',
+  couchState: {},
 };
 
 export const PROD_SITE_FQDN = 'agentage.io';
@@ -156,7 +171,7 @@ export const buildVaultsConfig = (
   };
 };
 
-/** UI validation — mirrors memory-core validateConfig's two semantic rules. */
+/** UI validation - mirrors memory-core validateConfig's two semantic rules. */
 export const validateSettings = (s: AgentageMemorySettings): string[] => {
   const errs: string[] = [];
   // The vault name auto-derives (main.vaultName) and the remote defaults to the managed

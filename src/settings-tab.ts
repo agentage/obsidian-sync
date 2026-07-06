@@ -70,7 +70,7 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
 
     containerEl.createEl('p', {
       cls: 'ams-sub',
-      text: 'One memory for all your AI — backed up, in sync, and readable by Claude, ChatGPT, Cursor, and more.',
+      text: 'One memory for all your AI - backed up, in sync, and readable by Claude, ChatGPT, Cursor, and more.',
     });
 
     // A non-prod host must be impossible to miss, whether it came from the setting or the env.
@@ -126,7 +126,7 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
     if (this.host.isSignedIn()) {
       new Setting(containerEl)
         .setName('Expose remote MCP')
-        .setDesc('Let AI apps anywhere — Claude, ChatGPT, Cursor — read and write your notes.')
+        .setDesc('Let AI apps anywhere - Claude, ChatGPT, Cursor - read and write your notes.')
         .addToggle((t) =>
           t.setValue(s.mcp.includes('remote')).onChange((v) => this.setScope('remote', v))
         );
@@ -137,7 +137,7 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
     // ---- How to connect AI apps over MCP (only meaningful once signed in) ----
     if (this.host.isSignedIn()) {
       const docs = containerEl.createEl('p', { cls: 'ams-hint' });
-      docs.appendText('Connect Claude, ChatGPT, Cursor and more — see ');
+      docs.appendText('Connect Claude, ChatGPT, Cursor and more - see ');
       docs.createEl('a', { text: 'how to connect', href: CONNECT_URL });
       docs.appendText('.');
     }

@@ -34,6 +34,7 @@ import { openMemoryChooser } from './memory-chooser';
 import { openActionsMenu, type PluginAction } from './actions-menu';
 import { openSyncPreview, type SyncPreview } from './sync-preview-modal';
 import { CouchSync, type CouchAuthorize } from './couch/couch-sync';
+import { CouchState } from './couch/couch-state';
 import { CouchTokenClient, type CouchTokenPost } from './couch/couch-token';
 
 // Single-host: every origin derives from the site FQDN. Precedence: the persisted
@@ -119,12 +120,12 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
 
     // Ribbon + command open a modal action-picker (Sync now / Choose memory / dashboard).
     // Kept alongside the status-bar dot so the same actions survive when there's no status
-    // bar (the mobile case, once mobile is re-enabled — desktop-only for now).
+    // bar (the mobile case, once mobile is re-enabled - desktop-only for now).
     this.addRibbonIcon('network', 'Agentage Sync', () => this.openActions());
     const sb = this.addStatusBarItem();
     this.statusBar = sb;
     sb.addClass('ams-statusbar', 'mod-clickable');
-    // A REAL child element — an empty status-bar item (only a ::before) is hidden by Obsidian.
+    // A REAL child element - an empty status-bar item (only a ::before) is hidden by Obsidian.
     this.statusDot = sb.createSpan({ cls: 'ams-sb-dot' });
     this.statusEl = sb.createSpan({ cls: 'ams-sb-text' });
     this.registerDomEvent(sb, 'click', (evt) => this.showStatusMenu(evt));
@@ -157,13 +158,13 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     this.registerEvent(
       this.app.vault.on(
         'modify',
-        onMd((p) => void this.couch?.pushFile(p))
+        onMd((p) => void this.couch?.pushFileLive(p))
       )
     );
     this.registerEvent(
       this.app.vault.on(
         'create',
-        onMd((p) => void this.couch?.pushFile(p))
+        onMd((p) => void this.couch?.pushFileLive(p))
       )
     );
     this.registerEvent(
@@ -176,11 +177,12 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       this.app.vault.on('rename', (f, oldPath) => {
         if (f instanceof TFile && f.extension === 'md') {
           void this.couch?.removeFile(oldPath);
-          void this.couch?.pushFile(f.path);
+          void this.couch?.pushFileLive(f.path);
         }
       })
     );
-    this.registerInterval(window.setInterval(() => void this.couch?.pullOnce(), 2000));
+    // Tick = flush any queued (failed) pushes, then pull. Failed live pushes are not lost.
+    this.registerInterval(window.setInterval(() => void this.couch?.tick(), 2000));
   }
 
   /** Sync a couch-channel memory: discovery already resolved endpoint/db/tokenUrl; mint the
@@ -199,11 +201,22 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
         () => Date.now()
       );
       const authorize: CouchAuthorize = () => tokenClient.token();
+      // Persist the pull cursor + push-rev cache + pending pushes per (host, memory) through
+      // the plugin's data.json, so a reload resumes instead of re-pulling from seq 0.
+      const key = `${this.activeFqdn}:${memory}`;
+      const state = new CouchState(
+        () => this.settings.couchState[key],
+        async (s) => {
+          this.settings.couchState[key] = s;
+          await this.saveSettings();
+        }
+      );
       this.couch = new CouchSync(
         this.app.vault,
         { endpoint: ch.endpoint, db: ch.db },
         authorize,
         () => tokenClient.invalidate(),
+        state,
         (m) => console.debug('[Agentage Couch]', m)
       );
       this.couchMemory = memory;
@@ -233,7 +246,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   private buildAuth(): void {
     // Token store: an in-memory cache (always works in-session) mirrored to Obsidian's
     // encrypted secretStorage, never data.json/vaults.json. secretStorage can THROW when
-    // the OS keyring is unavailable (common on headless/keyring-less Linux) — we log and
+    // the OS keyring is unavailable (common on headless/keyring-less Linux) - we log and
     // keep the token in the cache + ~/.agentage/auth.json so sign-in still works.
     const ss = (
       this.app as unknown as {
@@ -379,19 +392,19 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     let tip: string;
     if (!signedIn) {
       tone = 'gray';
-      tip = 'Agentage Sync — not signed in. Click to sign in.';
+      tip = 'Agentage Sync - not signed in. Click to sign in.';
     } else if (erroring) {
       tone = 'red';
-      tip = `Agentage Sync — ${this.syncState}${this.syncMsg ? `: ${this.syncMsg}` : ''}. Click for options.`;
+      tip = `Agentage Sync - ${this.syncState}${this.syncMsg ? `: ${this.syncMsg}` : ''}. Click for options.`;
     } else if (this.syncState === 'syncing') {
       tone = 'green';
-      tip = 'Agentage Sync — syncing… Click for options.';
+      tip = 'Agentage Sync - syncing… Click for options.';
     } else if (!hasMemory) {
       tone = 'amber';
-      tip = 'Agentage Sync — signed in. Choose a memory to sync into. Click to choose.';
+      tip = 'Agentage Sync - signed in. Choose a memory to sync into. Click to choose.';
     } else {
       tone = 'green';
-      tip = `Agentage Sync — ready (${this.settings.vault}). Click for options.`;
+      tip = `Agentage Sync - ready (${this.settings.vault}). Click for options.`;
     }
     this.statusDot.removeClass('is-gray', 'is-amber', 'is-green', 'is-red');
     this.statusDot.addClass(`is-${tone}`);
@@ -519,7 +532,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   }
 
   /** Create a new server memory via POST api.<fqdn>/api/memories (the management API;
-   * the sync host stays a pure git transport and git push never creates — R14). */
+   * the sync host stays a pure git transport and git push never creates - R14). */
   async createVault(name: string): Promise<{ ok: boolean; vault?: string; error?: string }> {
     const token = await this.auth.getValidToken();
     if (!token) return { ok: false, error: 'Sign in to Agentage first.' };
@@ -596,7 +609,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
 
   // Git fs runs over Obsidian's vault adapter on BOTH desktop and mobile (the proven
   // obsidian-git pattern): the whole vault is the worktree, `.git` lives inside it,
-  // paths are vault-relative (dir=''). We do NOT use node:fs — a native
+  // paths are vault-relative (dir=''). We do NOT use node:fs - a native
   // `import('node:fs')` does not resolve in Obsidian's Electron renderer, which silently
   // killed every sync right after host-resolve (resolve 200, then zero git requests).
   private buildController(): SyncController {
@@ -623,7 +636,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     let remote = this.settings.origin.remote.trim();
     const managed = !remote || remote === 'agentage';
     const chosen = normalizeVaultName(this.settings.vault);
-    // In managed mode the user must pick a memory explicitly — never guess which one to
+    // In managed mode the user must pick a memory explicitly - never guess which one to
     // write to. No selection → open the chooser instead of syncing.
     if (managed && !chosen) {
       this.chooseMemory();
@@ -658,9 +671,9 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       if (r.conflicted.length)
         return {
           ok: false,
-          message: `Conflicts in ${r.conflicted.length} file(s) — see "Agentage Sync Conflicts".`,
+          message: `Conflicts in ${r.conflicted.length} file(s) - see "Agentage Sync Conflicts".`,
         };
-      // Unmergeable history (criss-cross): not pushed, no per-file markers — surface the reason.
+      // Unmergeable history (criss-cross): not pushed, no per-file markers - surface the reason.
       if (!r.pushed && r.message) return { ok: false, message: r.message };
       const bits = [r.action, r.committed ? 'committed' : '', r.pushed ? 'pushed' : ''].filter(
         Boolean
@@ -738,6 +751,8 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     this.settings = { ...DEFAULT_SETTINGS, ...data };
     this.settings.origin = { ...DEFAULT_SETTINGS.origin, ...this.settings.origin };
     if (!Array.isArray(this.settings.mcp)) this.settings.mcp = [...DEFAULT_SETTINGS.mcp];
+    // Fresh object so mutating couch state never aliases the shared DEFAULT_SETTINGS.
+    this.settings.couchState = { ...(data?.couchState ?? {}) };
   }
 
   async saveSettings(): Promise<void> {
