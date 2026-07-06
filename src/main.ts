@@ -29,6 +29,7 @@ import type { GetJson } from './auth/discovery';
 import { HostResolver, buildRepoUrl } from './resolve-host';
 import { openMemoryChooser } from './memory-chooser';
 import { openActionsMenu, type PluginAction } from './actions-menu';
+import { openSyncPreview, type SyncPreview } from './sync-preview-modal';
 
 // Single-host: every origin derives from SITE_FQDN. Defaults to prod; the
 // AGENTAGE_SITE_FQDN env var (desktop only, same pattern as AGENTAGE_CONFIG_DIR)
@@ -101,7 +102,10 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     this.addSettingTab(this.settingTab);
     this.registerObsidianProtocolHandler(CALLBACK_ACTION, (params) => {
       console.debug('[Agentage Sync] OAuth callback received', { hasCode: !!params.code });
-      void this.auth.handleCallback(params).then(() => this.onAuthChanged());
+      void this.auth.handleCallback(params).then(() => {
+        this.onAuthChanged();
+        this.autoSyncOnReady(true); // sign-in complete -> auto-sync + show the popup
+      });
     });
 
     // Ribbon + command open a modal action-picker (Sync now / Choose memory / dashboard).
@@ -128,6 +132,8 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       callback: () => this.chooseMemory(),
     });
     this.addCommand({ id: 'open-menu', name: 'Open menu', callback: () => this.openActions() });
+    // Already signed in with a memory at startup -> sync silently (no popup every launch).
+    this.autoSyncOnReady(false);
   }
 
   private buildAuth(): void {
@@ -428,25 +434,25 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     return normalizeVaultName(this.app.vault.getName()) || 'personal';
   }
 
-  /** Set the memory this vault syncs into, persist, and refresh the UI. */
+  /** Set the memory this vault syncs into, persist, refresh the UI, then auto-sync. */
   async selectVault(name: string): Promise<void> {
     this.settings.vault = name;
     await this.saveSettings();
     new Notice(`Agentage memory: ${name}`);
     this.onAuthChanged(); // re-render settings + status bar
+    this.autoSyncOnReady(true); // memory chosen -> auto-sync + show the popup
   }
 
   currentVault(): string {
     return this.settings.vault;
   }
 
-  /** Select a memory and immediately sync it (the chooser's "Sync now" per row). */
+  /** Select a memory and sync it via the both-way count popup (the chooser's sync buttons). */
   async syncVault(name: string): Promise<void> {
     this.settings.vault = name;
     await this.saveSettings();
     this.onAuthChanged();
-    const r = await this.syncNow();
-    new Notice(`Agentage Sync: ${r.message}`);
+    this.autoSyncOnReady(true); // show the both-way count popup + sync (was: silent sync + Notice)
   }
 
   /** Open the memory chooser popup (pick existing or create new). */
@@ -463,9 +469,9 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   }
   async disconnect(): Promise<void> {
     await this.auth.disconnect();
-    // Drop the selected memory so the next session starts in the amber "Choose Memory" state
-    // and re-validates the pick — never resurface a stale (possibly deleted) memory as active.
-    this.settings.vault = '';
+    // Keep the selected memory across logout/login (persisted in data.json) so the next
+    // sign-in resumes the same memory with no re-pick. A deleted/renamed memory is caught
+    // at sync time (resolution + push), not by forgetting the choice here.
     this.lastVault = undefined;
     await this.saveSettings();
     this.refreshStatus();
@@ -537,6 +543,42 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       return { ok: true, message: `${syncedVault}: ${bits.join(' + ')}` };
     } catch (e) {
       return { ok: false, message: (e as Error).message };
+    }
+  }
+
+  // Resolve the managed remote URL for the chosen memory (shared by the preview).
+  private async resolvedRemote(token: string): Promise<string | null> {
+    let remote = this.settings.origin.remote.trim();
+    const managed = !remote || remote === 'agentage';
+    const chosen = normalizeVaultName(this.settings.vault);
+    if (managed && !chosen) return null;
+    if (managed) remote = buildRepoUrl((await this.resolver.resolve(token)).gitEndpoint, chosen);
+    return remote;
+  }
+
+  // Non-mutating preview of the next sync (file counts each way) for the popup.
+  private async previewSync(): Promise<SyncPreview> {
+    const token = await this.auth.getValidToken();
+    if (!token) return { incoming: 0, outgoing: 0, firstSync: true };
+    const remote = await this.resolvedRemote(token);
+    if (!remote) return { incoming: 0, outgoing: 0, firstSync: true };
+    return this.buildController().preview({ url: remote, token });
+  }
+
+  // Auto-sync once signed in WITH a memory chosen. `withModal` shows the file-count
+  // popup (on sign-in / memory pick); silent on startup. Skips if a sync is in flight.
+  private autoSyncOnReady(withModal: boolean): void {
+    if (!this.isSignedIn() || this.needsMemory() || this.syncState === 'syncing') return;
+    if (withModal) {
+      openSyncPreview(
+        this.app,
+        () => this.previewSync(),
+        () => this.syncNow()
+      );
+    } else {
+      void this.syncNow().then((r) => {
+        if (!r.ok) new Notice(`Agentage Sync: ${r.message}`);
+      });
     }
   }
 

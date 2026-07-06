@@ -93,3 +93,32 @@ describe('git-client (R8 clone, R11 push, R13 never-force)', () => {
     expect(fs.existsSync(path.join(D, 'b.md'))).toBe(true);
   });
 });
+
+describe('changedFileCount (sync preview)', () => {
+  it('counts added + modified blobs between two commits (subdirs recurse, dirs not counted)', async () => {
+    const B = path.join(tmp, 'B');
+    const ctx = { dir: B, url, token: 't' };
+    await client.clone(ctx);
+    const before = await client.resolveRef(ctx, 'main');
+
+    fs.writeFileSync(path.join(B, 'seed.md'), '# seed v2\n'); // modified
+    fs.mkdirSync(path.join(B, 'notes'), { recursive: true });
+    fs.writeFileSync(path.join(B, 'notes', 'new.md'), 'new\n'); // added, in a subdir
+    await client.add(ctx, 'seed.md');
+    await client.add(ctx, 'notes/new.md');
+    await client.commit(ctx, 'edit');
+    const after = await client.resolveRef(ctx, 'main');
+
+    expect(await client.changedFileCount(ctx, before, after)).toBe(2);
+    // Symmetric: the reverse direction sees the same paths (one now a deletion).
+    expect(await client.changedFileCount(ctx, after, before)).toBe(2);
+  });
+
+  it('returns 0 when both oids are the same commit', async () => {
+    const B = path.join(tmp, 'B');
+    const ctx = { dir: B, url, token: 't' };
+    await client.clone(ctx);
+    const head = await client.resolveRef(ctx, 'main');
+    expect(await client.changedFileCount(ctx, head, head)).toBe(0);
+  });
+});
