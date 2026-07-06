@@ -205,6 +205,36 @@ describe('fix 3 - unchanged pushAll performs zero HTTP', () => {
   });
 });
 
+describe('fix 5 - a couch-rejected push is queued, not silently cached', () => {
+  it('does not cache the rev on a non-2xx PUT, so the next tick retries it', async () => {
+    const vault = new FakeVault({ 'notes/n.md': 'X' });
+    const state = new CouchState(
+      () => undefined,
+      async () => {}
+    );
+    const couch = makeSync(vault, state);
+
+    handler = (url, method) => {
+      if (url.includes('_bulk_docs')) return res(200, []);
+      if (url.includes('f%3A') && method === 'PUT') return res(500, {}); // couch rejects the file doc
+      return res(404, {}); // f: GET -> not on server yet
+    };
+    await couch.pushFileLive('notes/n.md');
+    expect(state.pendingPaths()).toEqual(['notes/n.md']);
+    expect(state.revFor('notes/n.md')).toBeUndefined(); // NOT cached -> stays retryable
+
+    handler = (url, method) => {
+      if (url.includes('/_changes')) return res(200, { results: [], last_seq: '0' });
+      if (url.includes('_bulk_docs')) return res(200, []);
+      if (url.includes('f%3A') && method === 'PUT') return res(200, { ok: true });
+      return res(404, {});
+    };
+    await couch.tick();
+    expect(state.pendingPaths()).toEqual([]);
+    expect(state.revFor('notes/n.md')).toBeDefined(); // cached only after couch accepted it
+  });
+});
+
 describe('fix 4 - a failed live push is queued and retried on the next tick', () => {
   it('queues the path on a network error, then flushes it successfully on tick()', async () => {
     const vault = new FakeVault({ 'notes/n.md': 'X' });
