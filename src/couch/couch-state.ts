@@ -39,6 +39,11 @@ export class CouchState {
   revFor(path: string): string | undefined {
     return this.revs.get(path);
   }
+  // Paths we hold a content-rev for - "files we have synced". The disambiguator for a local
+  // deletion (known path absent from the vault) vs new remote content (unknown path).
+  knownPaths(): string[] {
+    return [...this.revs.keys()];
+  }
   async setRev(path: string, rev: string): Promise<void> {
     if (this.revs.get(path) === rev) return;
     this.revs.set(path, rev);

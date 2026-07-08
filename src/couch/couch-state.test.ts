@@ -57,6 +57,17 @@ describe('CouchState - push-rev cache', () => {
     await new CouchState(b.load, b.save).setRev('a.md', 'r9');
     expect(new CouchState(b.load, b.save).revFor('a.md')).toBe('r9');
   });
+
+  it('knownPaths lists every path with a cached rev (the local-deletion oracle)', async () => {
+    const b = backing();
+    const s = new CouchState(b.load, b.save);
+    expect(s.knownPaths()).toEqual([]);
+    await s.setRev('a.md', 'r1');
+    await s.setRev('b.md', 'r2');
+    expect(s.knownPaths().sort()).toEqual(['a.md', 'b.md']);
+    await s.dropRev('a.md');
+    expect(s.knownPaths()).toEqual(['b.md']);
+  });
 });
 
 describe('CouchState - pending pushes', () => {
@@ -106,5 +117,17 @@ describe('CouchState - pending deletes', () => {
     const reloaded = new CouchState(b.load, b.save);
     expect(reloaded.pendingPaths()).toEqual(['push.md']);
     expect(reloaded.pendingDeletePaths()).toEqual(['del.md']);
+  });
+
+  it('loads an old-shape snapshot (no pendingDeletes field) as an empty set', () => {
+    const stored: CouchMemoryState = { cursor: '3', revs: { 'a.md': 'r1' }, pending: ['b.md'] };
+    const s = new CouchState(
+      () => stored,
+      async () => {}
+    );
+    expect(s.getCursor()).toBe('3');
+    expect(s.revFor('a.md')).toBe('r1');
+    expect(s.pendingPaths()).toEqual(['b.md']);
+    expect(s.pendingDeletePaths()).toEqual([]); // absent field -> empty, no crash
   });
 });

@@ -30,6 +30,14 @@ export interface CouchSyncConfig {
 // Mints/caches the couch JWT (CouchTokenClient.token); the header is always "Bearer <jwt>".
 export type CouchAuthorize = () => Promise<string>;
 
+// Outcome of a full syncNow round. Resilient like tick(): a push/pull failure is recorded
+// here (and logged) rather than thrown, so callers can report success/failure without a catch.
+export interface SyncResult {
+  pushed: boolean; // pushAll finished without throwing
+  pulled: boolean; // pullOnce finished without throwing
+  error?: string; // first error message when either side failed
+}
+
 export class CouchSync {
   private pulling = false;
   private suppress = new Set<string>(); // paths being written by a pull (skip their push)
@@ -144,13 +152,45 @@ export class CouchSync {
     }
   }
 
-  // Live delete: a failed DELETE (409 stale rev / 401 / 5xx) queues the path so the next tick
-  // retries it - never swallowed (a swallowed delete lets pullOnce resurrect the file). Never
+  // Tombstone the file doc at its current couch rev. Terminal outcomes (no retry needed):
+  //   'deleted'  - couch accepted the tombstone, or the doc was already gone
+  //   'conflict' - couch advanced under us (a newer edit) - abandon the delete and let the
+  //                next pull re-deliver that newer version (edit-wins-over-stale-delete).
+  // Throws only on a transport/couch failure so the caller can keep the deletion pending.
+  private async tombstone(path: string): Promise<'deleted' | 'conflict'> {
+    const cur = await this.getDoc(fileId(path));
+    if (!cur?._rev || cur._deleted) {
+      await this.state.dropRev(path);
+      return 'deleted'; // already absent on couch
+    }
+    // Content moved on since we last synced it -> another device edited it, not the version we
+    // deleted. Never force-delete the fresh rev; drop our rev so pull re-delivers it.
+    const known = this.state.revFor(path);
+    if (known !== undefined && contentRev(cur) !== known) {
+      await this.state.dropRev(path);
+      return 'conflict';
+    }
+    const del = await this.req(
+      `/${encodeURIComponent(fileId(path))}?rev=${encodeURIComponent(cur._rev)}`,
+      { method: 'DELETE' }
+    );
+    if (del.status === 409) {
+      await this.state.dropRev(path); // rev went stale mid-flight -> let pull win
+      return 'conflict';
+    }
+    if (!ok2xx(del.status)) throw new Error(`couch delete ${del.status} for ${path}`);
+    await this.state.dropRev(path);
+    this.log(`delete ${path}`);
+    return 'deleted';
+  }
+
+  // Live delete (mirror of pushFileLive): a transport failure queues the tombstone so the next
+  // tick retries it, a terminal outcome (deleted/conflict) clears any prior queue entry. Never
   // throws (the vault event handler is void), so the fire-and-forget caller stays safe.
   async removeFile(path: string): Promise<void> {
     await this.state.dequeue(path); // latest intent is a delete - cancel any queued push
     try {
-      await this.deleteFile(path);
+      await this.tombstone(path);
       await this.state.dequeueDelete(path);
     } catch (e) {
       await this.state.enqueueDelete(path);
@@ -158,46 +198,19 @@ export class CouchSync {
     }
   }
 
-  // Delete the file doc, status-checked so a rejected DELETE throws (caller re-queues) instead
-  // of dropping the rev. A doc already absent on the server is an idempotent success; the rev
-  // is dropped only once the doc is confirmed gone (deleted here or already absent).
-  private async deleteFile(path: string): Promise<void> {
-    const id = fileId(path);
-    const rev = await this.currentRev(id, path);
-    if (rev !== null) await this.deleteWithRetry(id, path, rev);
-    await this.state.dropRev(path);
-  }
-
-  // DELETE against `rev`; a 409 (stale rev) re-reads the fresh rev and retries once. A doc that
-  // vanished between the read and the delete is an idempotent success; any other non-2xx throws.
-  private async deleteWithRetry(id: string, path: string, rev: string): Promise<void> {
-    let del = await this.deleteRev(id, rev);
-    if (del.status === 409) {
-      const fresh = await this.currentRev(id, path);
-      if (fresh === null) return; // doc gone -> idempotent success
-      del = await this.deleteRev(id, fresh);
+  // A file we have synced (rev cache) but that is no longer in the vault's markdown set was
+  // deleted locally - issue its tombstone. A couch doc with no rev-cache entry is new remote
+  // content (pull writes it), so it is never mistaken for a local deletion.
+  private async reconcileDeletions(): Promise<void> {
+    const present = new Set(this.vault.getMarkdownFiles().map((f) => f.path));
+    for (const path of this.state.knownPaths()) {
+      if (!present.has(path)) await this.removeFile(path);
     }
-    if (!ok2xx(del.status)) throw new Error(`couch delete ${del.status} for ${path}`);
-    this.log(`delete ${path}`);
-  }
-
-  // The server _rev for a file doc, or null if absent (404). A non-404 non-2xx read throws so
-  // the delete is re-queued rather than mistaken for "already gone".
-  private async currentRev(id: string, path: string): Promise<string | null> {
-    const got = await this.req(`/${encodeURIComponent(id)}`);
-    if (got.status === 404) return null;
-    if (!ok2xx(got.status)) throw new Error(`couch delete read ${got.status} for ${path}`);
-    return (got.json as FileDoc | null)?._rev ?? null;
-  }
-
-  private deleteRev(id: string, rev: string): Promise<{ status: number; json: unknown }> {
-    return this.req(`/${encodeURIComponent(id)}?rev=${encodeURIComponent(rev)}`, {
-      method: 'DELETE',
-    });
   }
 
   async pushAll(): Promise<void> {
     for (const f of this.vault.getMarkdownFiles()) await this.pushFileLive(f.path);
+    await this.reconcileDeletions();
   }
 
   // -- pull: couch -> vault --------------------------------------------------
@@ -283,7 +296,7 @@ export class CouchSync {
     }
     for (const path of this.state.pendingDeletePaths()) {
       try {
-        await this.deleteFile(path);
+        await this.tombstone(path);
         await this.state.dequeueDelete(path);
       } catch {
         /* keep queued for the next tick */
@@ -300,10 +313,25 @@ export class CouchSync {
     }
   }
 
-  async syncNow(): Promise<void> {
-    // pushAll first-syncs a non-empty local vault while the server git->couch seed is unwired;
-    // safe (no OOM/timeout) because the push rev-cache skips already-converged files.
-    await this.pushAll();
-    await this.pullOnce();
+  // Resilient like tick(): a push or pull failure is recorded, not thrown, so a one-shot sync
+  // never rejects and the caller still learns which side failed. pushAll first-syncs a non-empty
+  // vault (echo-safe; the push rev-cache skips already-converged files) and reconciles deletions.
+  async syncNow(): Promise<SyncResult> {
+    const out: SyncResult = { pushed: false, pulled: false };
+    try {
+      await this.pushAll();
+      out.pushed = true;
+    } catch (e) {
+      out.error = (e as Error).message;
+      this.log(`push failed (will retry): ${(e as Error).message}`);
+    }
+    try {
+      await this.pullOnce();
+      out.pulled = true;
+    } catch (e) {
+      out.error ??= (e as Error).message;
+      this.log(`pull failed (will retry): ${(e as Error).message}`);
+    }
+    return out;
   }
 }

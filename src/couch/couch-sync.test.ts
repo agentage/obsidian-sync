@@ -84,13 +84,13 @@ const makeSync = (
     state
   );
 
-const fileDoc = (path: string, rev: string) => ({
+const fileDoc = (path: string, rev: string, leaves: string[] = []) => ({
   _id: `f:${path}`,
   _rev: rev,
   type: 'file',
   path,
   size: 1,
-  leaves: [],
+  leaves,
 });
 
 const changesUrls = (): string[] =>
@@ -232,57 +232,152 @@ describe('a per-leaf _bulk_docs error queues the push, no file doc PUT', () => {
   });
 });
 
-describe('a rejected delete stays retryable', () => {
-  it('queues the path on a non-2xx DELETE, then a later tick completes it', async () => {
+describe('delete durability - a failed tombstone is queued and eventually lands', () => {
+  it('queues the deletion on a rejected DELETE, then flushes it on the next tick', async () => {
     const vault = new FakeVault(); // file already gone locally
     const state = new CouchState(
       () => undefined,
       async () => {}
     );
-    await state.setRev('n.md', 'r1'); // was previously pushed -> couch holds the doc
+    await state.setRev('gone.md', 'h:g1'); // we had synced this file -> couch holds the doc
     const couch = makeSync(vault, state);
 
     handler = (url, method) => {
-      if (url.includes('f%3A') && method === 'DELETE') return res(500, {}); // couch rejects it
-      if (url.includes('f%3A')) return res(200, fileDoc('n.md', '3-abc'));
+      if (url.includes('f%3Agone.md') && method === 'DELETE') return res(500, {}); // couch rejects
+      if (url.includes('f%3Agone.md')) return res(200, fileDoc('gone.md', '3-r', ['h:g1']));
       return res(404, {});
     };
-    await couch.removeFile('n.md');
-    expect(state.pendingDeletePaths()).toEqual(['n.md']);
-    expect(state.revFor('n.md')).toBe('r1'); // rev kept -> still known to exist on couch
+    await couch.removeFile('gone.md'); // never throws
+    expect(state.pendingDeletePaths()).toEqual(['gone.md']);
+    expect(state.revFor('gone.md')).toBe('h:g1'); // rev kept so the retry can disambiguate
 
     handler = (url, method) => {
       if (url.includes('/_changes')) return res(200, { results: [], last_seq: '0' });
-      if (url.includes('f%3A') && method === 'DELETE') return res(200, { ok: true });
-      if (url.includes('f%3A')) return res(200, fileDoc('n.md', '3-abc'));
+      if (url.includes('f%3Agone.md') && method === 'DELETE') return res(200, { ok: true });
+      if (url.includes('f%3Agone.md')) return res(200, fileDoc('gone.md', '3-r', ['h:g1']));
       return res(404, {});
     };
     await couch.tick();
-    expect(state.pendingDeletePaths()).toEqual([]);
-    expect(state.revFor('n.md')).toBeUndefined(); // dropped only after couch accepted the delete
+    expect(state.pendingDeletePaths()).toEqual([]); // tombstone landed -> dequeued
+    expect(state.revFor('gone.md')).toBeUndefined(); // and its rev cache dropped
   });
+});
 
-  it('re-reads the fresh rev and retries the delete on a 409', async () => {
-    const vault = new FakeVault();
+describe('local-deletion reconciliation via the rev cache', () => {
+  it('tombstones a known path absent from the vault, leaving present files untouched', async () => {
+    const vault = new FakeVault({ 'keep.md': 'K' }); // present
     const state = new CouchState(
       () => undefined,
       async () => {}
     );
+    await state.setRev('gone.md', 'h:g1'); // known but absent -> a local deletion
     const couch = makeSync(vault, state);
 
-    let deleteAttempts = 0;
+    const deleted: string[] = [];
     handler = (url, method) => {
-      if (url.includes('f%3A') && method === 'DELETE') {
-        deleteAttempts++;
-        return url.includes('rev=1-stale') ? res(409, {}) : res(200, { ok: true });
+      if (url.includes('_bulk_docs')) return res(200, []);
+      if (url.includes('f%3Agone.md') && method === 'DELETE') {
+        deleted.push('gone.md');
+        return res(200, { ok: true });
       }
-      if (url.includes('f%3A'))
-        return res(200, fileDoc('n.md', deleteAttempts === 0 ? '1-stale' : '2-fresh'));
+      if (url.includes('f%3Agone.md')) return res(200, fileDoc('gone.md', '2-x', ['h:g1']));
+      if (url.includes('f%3Akeep.md') && method === 'PUT') return res(200, { ok: true });
+      return res(404, {}); // keep.md GET -> not on server yet
+    };
+    await couch.pushAll();
+    expect(deleted).toEqual(['gone.md']); // known-but-absent -> tombstoned
+    expect(state.revFor('gone.md')).toBeUndefined(); // rev-cache entry dropped
+    expect(state.revFor('keep.md')).toBeDefined(); // present file kept (pushed, not deleted)
+  });
+});
+
+describe('pull-delete does not resurface as a phantom local deletion', () => {
+  it('a pull-applied delete drops the rev so the next pushAll issues no tombstone', async () => {
+    const vault = new FakeVault({ 'gone.md': 'BODY' });
+    const state = new CouchState(
+      () => undefined,
+      async () => {}
+    );
+    await state.setRev('gone.md', 'h:old'); // we had synced it
+    const couch = makeSync(vault, state);
+
+    handler = (url) => {
+      if (url.includes('/_changes'))
+        return res(200, { results: [{ id: 'f:gone.md', deleted: true }], last_seq: '5' });
       return res(404, {});
     };
-    await couch.removeFile('n.md');
-    expect(deleteAttempts).toBe(2); // stale rev rejected, fresh rev accepted
-    expect(state.pendingDeletePaths()).toEqual([]);
+    await couch.pullOnce();
+    expect(vault.content('gone.md')).toBeUndefined();
+    expect(state.revFor('gone.md')).toBeUndefined(); // pull dropped the rev cache
+
+    let deleteCalls = 0;
+    handler = (url, method) => {
+      if (url.includes('/_changes')) return res(200, { results: [], last_seq: '5' });
+      if (method === 'DELETE') deleteCalls++;
+      return res(404, {});
+    };
+    await couch.pushAll();
+    expect(deleteCalls).toBe(0); // not re-detected as a local deletion
+  });
+});
+
+describe('tombstone-409 - edit wins over a stale delete', () => {
+  it('abandons the deletion on a 409 and lets the next pull restore the newer doc', async () => {
+    const vault = new FakeVault(); // file already gone locally
+    const state = new CouchState(
+      () => undefined,
+      async () => {}
+    );
+    await state.setRev('race.md', 'h:v1'); // we knew v1
+    const couch = makeSync(vault, state);
+
+    handler = (url, method) => {
+      if (url.includes('f%3Arace.md') && method === 'DELETE')
+        return res(409, { error: 'conflict' });
+      if (url.includes('f%3Arace.md')) return res(200, fileDoc('race.md', '2-a', ['h:v1']));
+      return res(404, {});
+    };
+    await couch.pushAll();
+    expect(state.pendingDeletePaths()).toEqual([]); // 409 is terminal -> never queued
+    expect(state.revFor('race.md')).toBeUndefined(); // rev dropped -> not re-detected
+
+    handler = (url) => {
+      if (url.includes('/_changes'))
+        return res(200, {
+          results: [{ id: 'f:race.md', doc: fileDoc('race.md', '3-b', ['h:v2']) }],
+          last_seq: '7',
+        });
+      if (url.includes('h%3Av2')) return res(200, { data: 'NEW' });
+      return res(404, {});
+    };
+    await couch.pullOnce();
+    expect(vault.content('race.md')).toBe('NEW'); // newer edit restored, not force-deleted
+  });
+});
+
+describe('pre-DELETE content-rev mismatch - edit wins before any DELETE is issued', () => {
+  it('abandons the deletion with no DELETE request when couch already advanced the content', async () => {
+    const vault = new FakeVault(); // file already gone locally
+    const state = new CouchState(
+      () => undefined,
+      async () => {}
+    );
+    await state.setRev('race.md', 'h:v1'); // we knew v1
+    const couch = makeSync(vault, state);
+
+    let deleteCalls = 0;
+    handler = (url, method) => {
+      if (url.includes('f%3Arace.md') && method === 'DELETE') {
+        deleteCalls++;
+        return res(200, { ok: true });
+      }
+      if (url.includes('f%3Arace.md')) return res(200, fileDoc('race.md', '2-a', ['h:v2']));
+      return res(404, {});
+    };
+    await couch.pushAll();
+    expect(deleteCalls).toBe(0); // abandoned before any DELETE - content already moved on
+    expect(state.pendingDeletePaths()).toEqual([]); // never queued
+    expect(state.revFor('race.md')).toBeUndefined(); // rev dropped -> not re-detected
   });
 });
 
@@ -399,5 +494,26 @@ describe('a non-2xx pull surfaces as a failing sync', () => {
     const couch = makeSync(vault, state);
     handler = (url) => (url.includes('/_changes') ? res(500, {}) : res(404, {}));
     await expect(couch.tick()).resolves.toBeUndefined();
+  });
+});
+
+describe('syncNow is resilient like tick()', () => {
+  it('records a pull failure instead of throwing, and reports push/pull status', async () => {
+    const vault = new FakeVault({ 'n.md': 'X' });
+    const state = new CouchState(
+      () => undefined,
+      async () => {}
+    );
+    const couch = makeSync(vault, state);
+    handler = (url, method) => {
+      if (url.includes('/_changes')) throw new Error('pull boom'); // pull fails
+      if (url.includes('_bulk_docs')) return res(200, []);
+      if (url.includes('f%3A') && method === 'PUT') return res(200, { ok: true });
+      return res(404, {}); // f: GET -> not on server yet
+    };
+    const result = await couch.syncNow(); // must not throw
+    expect(result.pushed).toBe(true);
+    expect(result.pulled).toBe(false);
+    expect(result.error).toBe('pull boom');
   });
 });
