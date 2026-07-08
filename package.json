@@ -55,8 +55,6 @@
     "vitest": "^4.1.7"
   },
   "dependencies": {
-    "diff3": "^0.0.4",
-    "isomorphic-git": "^1.38.6",
     "js-yaml": "^5.2.1"
   }
 }

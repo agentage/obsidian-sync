@@ -85,34 +85,29 @@ describe('onAuthChanged tears the couch controller down on an auto sign-out', ()
   });
 });
 
-describe('syncNow guards a couch memory from a git-bound folder', () => {
-  // A resolution advertising `work` on the couch channel (git endpoint = https://sync.x/u).
-  const resolution = {
-    gitEndpoint: 'https://sync.x/u',
+describe('syncNow routes couch memories to couch and errors on non-couch memories', () => {
+  // A resolution advertising `work` on the couch channel.
+  const couchResolution = {
     region: 'default',
-    vaults: [],
     ttl: 3600,
     couchEndpoint: 'https://couch.x',
     couchTokenUrl: 'https://auth.x/account/couch-token',
     couchVaults: [{ vault: 'work', db: 'mem_abc' }],
   };
-  const gitConfig = (memory: string) =>
-    `[remote "origin"]\n\turl = https://sync.x/u/${memory}.git\n`;
+  // An old-server resolution with no couch channel at all (server flip pending).
+  const noCouchResolution = { region: 'default', ttl: 3600 };
 
   type Harness = {
     auth: { getValidToken: () => Promise<string | null> };
     resolver: { resolve: (t: string) => Promise<unknown> };
-    settings: { origin: { remote: string }; vault: string };
-    app: {
-      vault: {
-        adapter: { exists: (p: string) => Promise<boolean>; read: (p: string) => Promise<string> };
-      };
-    };
+    settings: { vault: string };
+    couchChannel: { clear: () => void };
+    setStatusBar: (s: string, msg?: string) => void;
     couchSyncNow: (ch: unknown, memory: string) => Promise<{ ok: boolean; message: string }>;
     syncNow: () => Promise<{ ok: boolean; message: string }>;
   };
 
-  const makeHarness = async (adapter: Harness['app']['vault']['adapter']): Promise<Harness> => {
+  const makeHarness = async (resolution: unknown): Promise<Harness> => {
     const { default: AgentageMemoryPlugin } = await import('./main');
     const plugin = new AgentageMemoryPlugin(
       {} as unknown as App,
@@ -120,36 +115,15 @@ describe('syncNow guards a couch memory from a git-bound folder', () => {
     ) as unknown as Harness;
     plugin.auth = { getValidToken: async () => 'tok' };
     plugin.resolver = { resolve: async () => resolution };
-    plugin.settings = { origin: { remote: '' }, vault: 'work' };
-    plugin.app = { vault: { adapter } };
+    plugin.settings = { vault: 'work' };
+    plugin.couchChannel = { clear: vi.fn() } as unknown as Harness['couchChannel'];
+    plugin.setStatusBar = vi.fn();
     return plugin;
   };
 
-  it('blocks with a clear notice and never engages couch when the folder is git-bound elsewhere', async () => {
+  it('engages couch for a memory advertised on the couch channel', async () => {
     noticeMessages.length = 0;
-    const plugin = await makeHarness({
-      exists: async () => true,
-      read: async () => gitConfig('default'),
-    });
-    const couchSpy = vi.fn(async () => ({ ok: true, message: 'engaged' }));
-    plugin.couchSyncNow = couchSpy;
-
-    const r = await plugin.syncNow();
-
-    expect(couchSpy).not.toHaveBeenCalled();
-    expect(r.ok).toBe(false);
-    expect(r.message).toContain('git memory (default)');
-    expect(noticeMessages.at(-1)).toContain('git memory (default)');
-  });
-
-  it('engages couch normally for a clean (git-free) folder', async () => {
-    noticeMessages.length = 0;
-    const plugin = await makeHarness({
-      exists: async () => false,
-      read: async () => {
-        throw new Error('no .git');
-      },
-    });
+    const plugin = await makeHarness(couchResolution);
     const couchSpy = vi.fn(async () => ({ ok: true, message: 'work: couch synced' }));
     plugin.couchSyncNow = couchSpy;
 
@@ -157,5 +131,19 @@ describe('syncNow guards a couch memory from a git-bound folder', () => {
 
     expect(couchSpy).toHaveBeenCalledWith(expect.anything(), 'work');
     expect(r).toEqual({ ok: true, message: 'work: couch synced' });
+  });
+
+  it('surfaces a clear error (never git) for a memory not yet on the couch channel', async () => {
+    noticeMessages.length = 0;
+    const plugin = await makeHarness(noCouchResolution);
+    const couchSpy = vi.fn(async () => ({ ok: true, message: 'engaged' }));
+    plugin.couchSyncNow = couchSpy;
+
+    const r = await plugin.syncNow();
+
+    expect(couchSpy).not.toHaveBeenCalled();
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('not on the new sync channel yet');
+    expect(noticeMessages.at(-1)).toContain('not on the new sync channel yet');
   });
 });

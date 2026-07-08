@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Regression guard: the wrong host `mcp.agentage.io` must never reappear.
-// The API/MCP host is `memory.agentage.io`; the git sync host is `sync.agentage.io`.
+// The API/MCP host is `memory.agentage.io`; the discovery host is `sync.agentage.io`.
 import { readFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 

@@ -18,8 +18,9 @@ const context = await esbuild.context({
   // reaches them. Without the `node:`-prefixed entries esbuild leaves the raw
   // specifier and the Obsidian renderer can't resolve it.
   external: ['obsidian', 'electron', ...builtins, ...builtins.map((m) => `node:${m}`)],
-  // Browser platform so the bundle is mobile-safe; isomorphic-git + diff3 + js-yaml
-  // are pure-JS. A couple of Node globals are shimmed for browser resolution.
+  // Browser platform so the bundle is mobile-safe; the couch sync channel uses Obsidian
+  // requestUrl + Web Crypto (no node builtins), js-yaml is pure-JS. A couple of Node
+  // globals are shimmed for browser resolution.
   platform: 'browser',
   define: {
     global: 'window',
