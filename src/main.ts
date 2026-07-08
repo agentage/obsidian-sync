@@ -533,7 +533,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   }
 
   /** Create a new server memory via POST api.<fqdn>/api/memories (the management API;
-   * the sync host stays a pure git transport and git push never creates - R14). */
+   * the sync channel never creates memories implicitly - R14). */
   async createVault(name: string): Promise<{ ok: boolean; vault?: string; error?: string }> {
     const token = await this.auth.getValidToken();
     if (!token) return { ok: false, error: 'Sign in to Agentage first.' };

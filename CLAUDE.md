@@ -8,7 +8,7 @@ Guidance for Claude Code when working in this repository.
 
 - **Plugin id:** `agentage-memory` (locked — the install/auto-update key) · **Display name:** `Agentage Sync`
 - **Repo:** `agentage/obsidian-sync` · **Default branch:** `master`
-- **Couch is the only device channel.** The plugin replicates a content-addressed doc model (leaf docs + a file doc) to a per-memory CouchDB over Obsidian `requestUrl`; a server bridge commits every couch edit to git (the store stays one bare git repo per memory, server-authoritative, `git grep`-able). Plaintext markdown end to end. The git device channel was removed (see git history before the couch-only cut) — a memory the server has **not** advertised on the couch channel is an explicit error (server flip pending), never a silent fallback.
+- **Couch is the only device channel.** The plugin replicates a content-addressed doc model (leaf docs + a file doc) to a per-memory CouchDB over Obsidian `requestUrl`; a server bridge commits every couch edit to git (the store stays one bare git repo per memory, server-authoritative, `git grep`-able). Plaintext markdown end to end. The git device channel was removed (see git history before the couch-only cut) - a memory the server has **not** advertised on the couch channel is an explicit error (server flip pending), never a silent fallback.
 
 ## Architecture (`src/`)
 
@@ -20,8 +20,8 @@ Guidance for Claude Code when working in this repository.
 
 ## Key invariants
 - **Server reconciles history.** The server bridge commits couch edits to git and reconciles concurrent edits; the plugin is echo-safe (a push/pull whose content already matches is skipped) so the vault↔couch↔git loop converges. Never silent-drop.
-- **Couch is the only device channel.** A memory absent from the resolution's `couch_vaults` resolves to `channel: 'error'` — surfaced as a Notice + red status dot ("not on the new sync channel yet - server update pending"), never a git fallback or a no-op.
-- **Tokens** live in `app.secretStorage` + `~/.agentage/auth.json` (0600) — **never** `vaults.json`/`data.json`. The per-memory couch JWT is minted on demand from `couch_token_url` (auth service is the sole minter), never persisted.
+- **Couch is the only device channel.** A memory absent from the resolution's `couch_vaults` resolves to `channel: 'error'` - surfaced as a Notice + red status dot ("not on the new sync channel yet - server update pending"), never a git fallback or a no-op.
+- **Tokens** live in `app.secretStorage` + `~/.agentage/auth.json` (0600) - **never** `vaults.json`/`data.json`. The per-memory couch JWT is minted on demand from `couch_token_url` (auth service is the sole minter), never persisted.
 - **No node builtins on the sync path** — couch uses `requestUrl` + Web Crypto (mobile-safe). The only `node:fs/os/path` use is the desktop `~/.agentage` config mirror (lazy, `isDesktop`-guarded); `node:http` backs the desktop loopback OAuth listener. **Mobile is deferred** (`isDesktopOnly: true`): the sync layer is mobile-safe, but sign-in (the `obsidian://` deep-link round-trip) is not device-verified — re-enable only after a mobile smoke passes.
 
 ## Development
