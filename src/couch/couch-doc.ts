@@ -63,3 +63,9 @@ export const encodeFile = async (
 
 // The deterministic content rev used as the push-skip cache key (joined leaf ids).
 export const contentRev = (fileDoc: Pick<FileDoc, 'leaves'>): string => fileDoc.leaves.join(',');
+
+// The content rev for a raw body, WITHOUT building a full file doc - the exact value pushFile
+// caches (contentRev(fileDoc) === leafIdsOf(body).join(',')). Lets the preview compute the
+// outgoing count from vault content alone, guaranteed equal to what pushAll would send.
+export const contentRevOf = async (body: string): Promise<string> =>
+  (await leafIdsOf(body)).join(',');

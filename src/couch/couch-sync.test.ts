@@ -8,6 +8,7 @@ import {
 } from 'obsidian';
 import { CouchSync, type CouchSyncConfig } from './couch-sync';
 import { CouchState } from './couch-state';
+import { contentRevOf } from './couch-doc';
 import type { CouchMemoryState } from '../settings';
 
 // Only the requestUrl/TFile coupling is mocked; the doc model + state are the real modules.
@@ -515,5 +516,39 @@ describe('syncNow is resilient like tick()', () => {
     expect(result.pushed).toBe(true);
     expect(result.pulled).toBe(false);
     expect(result.error).toBe('pull boom');
+  });
+});
+
+// The honest preview count: no network, no controller - just vault content vs the push-rev cache.
+describe('CouchSync.countOutgoing', () => {
+  const freshState = (init?: CouchMemoryState): CouchState =>
+    new CouchState(
+      () => init,
+      async () => {}
+    );
+
+  it('a fresh memory (empty cache) counts EVERY local md file - the first-sync bug fix', async () => {
+    const vault = new FakeVault({ 'a.md': 'A', 'b.md': 'B', 'notes/c.md': 'C' });
+    expect(await CouchSync.countOutgoing(vault, freshState())).toBe(3);
+  });
+
+  it('reports 0 once every file is at its pushed content rev (post-full-sync)', async () => {
+    const files = { 'a.md': 'A', 'b.md': 'B' };
+    const vault = new FakeVault(files);
+    const revs: Record<string, string> = {};
+    for (const [p, c] of Object.entries(files)) revs[p] = await contentRevOf(c);
+    expect(await CouchSync.countOutgoing(vault, freshState({ revs }))).toBe(0);
+  });
+
+  it('counts only files whose content changed since the last push', async () => {
+    const vault = new FakeVault({ 'a.md': 'A-new', 'b.md': 'B' });
+    const revs = { 'a.md': await contentRevOf('A-old'), 'b.md': await contentRevOf('B') };
+    expect(await CouchSync.countOutgoing(vault, freshState({ revs }))).toBe(1); // only a.md
+  });
+
+  it('counts a cached path removed from the vault as an outgoing delete', async () => {
+    const vault = new FakeVault({ 'a.md': 'A' });
+    const revs = { 'a.md': await contentRevOf('A'), 'gone.md': 'stale-rev' };
+    expect(await CouchSync.countOutgoing(vault, freshState({ revs }))).toBe(1); // the delete
   });
 });
