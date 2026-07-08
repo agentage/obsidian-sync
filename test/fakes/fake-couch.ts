@@ -51,6 +51,10 @@ export class FakeCouch {
   dropLeaf(id: string): void {
     this.droppedLeaves.add(id);
   }
+  /** Undo dropLeaf so a subsequent clean pull can reassemble the note (recovery-path test). */
+  restoreLeaf(id: string): void {
+    this.droppedLeaves.delete(id);
+  }
   /** Script the next _bulk_docs to report a per-leaf failure for `id`. */
   failLeafOnBulk(id: string, error = 'forbidden'): void {
     this.failLeaf = { id, error };
@@ -71,6 +75,17 @@ export class FakeCouch {
     };
     this.docs.set(id, doc);
     this.append(id, doc._rev, false);
+  }
+
+  /** Tombstone a doc as another device would (a remote-origin delete a pull then applies). */
+  deleteRemote(path: string): void {
+    const id = `f:${path}`;
+    const cur = this.docs.get(id);
+    if (!cur || cur._deleted) return;
+    const n = revNum(cur._rev) + 1;
+    const tomb: StoredDoc = { ...cur, _rev: rev(n, id + 'del'), _deleted: true };
+    this.docs.set(id, tomb);
+    this.append(id, tomb._rev, true);
   }
 
   // -- assertion helpers ------------------------------------------------------

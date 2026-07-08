@@ -22,6 +22,9 @@ export interface BootOptions {
   memories?: FakeMemory[];
   memoryName?: string; // the couch-channel memory the resolution advertises
   couchDb?: string;
+  // Additional couch-channel memories, each with its own db name + fresh in-memory store, so a
+  // memory-switch test can prove the controller repoints to a new db without reusing the old one.
+  extraCouch?: Array<{ memory: string; db: string }>;
   desktop?: boolean; // Platform.isDesktopApp; false -> obsidian:// deep-link sign-in path
 }
 
@@ -33,6 +36,8 @@ export interface Handles {
   router: Router;
   secrets: FakeSecrets;
   configDir: string;
+  /** Extra couch stores keyed by memory name (only when BootOptions.extraCouch was given). */
+  extraCouch: Record<string, FakeCouch>;
   /** URLs passed to window.open (the authorize redirect). */
   openedUrls: string[];
   teardown: () => Promise<void>;
@@ -55,7 +60,13 @@ export async function bootPlugin(opts: BootOptions = {}): Promise<Handles> {
   const secrets = fakeSecrets();
   const couch = new FakeCouch(couchDb);
   const auth = new FakeAuthServer({ memories: opts.memories ?? [], couchDb });
-  const router = new Router({ fqdn, auth, couch, memoryName });
+  const extra = (opts.extraCouch ?? []).map((e) => ({
+    memory: e.memory,
+    couch: new FakeCouch(e.db),
+  }));
+  const extraCouch: Record<string, FakeCouch> = {};
+  for (const e of extra) extraCouch[e.memory] = e.couch;
+  const router = new Router({ fqdn, auth, couch, memoryName, extraCouch: extra });
 
   requestUrlMock.mockImplementation(router.requestUrl);
 
@@ -105,7 +116,18 @@ export async function bootPlugin(opts: BootOptions = {}): Promise<Handles> {
     await fs.rm(configDir, { recursive: true, force: true });
   };
 
-  return { plugin, couch, auth, vault, router, secrets, configDir, openedUrls, teardown };
+  return {
+    plugin,
+    couch,
+    auth,
+    vault,
+    router,
+    secrets,
+    configDir,
+    extraCouch,
+    openedUrls,
+    teardown,
+  };
 }
 
 // Drive a full obsidian:// sign-in against the fakes: startSignIn -> capture the authorize URL ->

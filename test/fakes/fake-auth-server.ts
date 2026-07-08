@@ -30,6 +30,7 @@ export class FakeAuthServer {
   readonly memories: FakeMemory[];
   readonly couchDb: string;
   private failNextStatus?: number;
+  private failNextMgmtStatus?: number;
 
   constructor(opts: { memories?: FakeMemory[]; couchDb?: string } = {}) {
     this.memories = opts.memories ?? [];
@@ -38,6 +39,18 @@ export class FakeAuthServer {
 
   failNext(status: number): void {
     this.failNextStatus = status;
+  }
+
+  /** The next /api/memories GET or POST returns this status once (server-gap simulation). */
+  failNextManagement(status: number): void {
+    this.failNextMgmtStatus = status;
+  }
+
+  private takeMgmtFailure(): AuthReply | null {
+    if (this.failNextMgmtStatus === undefined) return null;
+    const status = this.failNextMgmtStatus;
+    this.failNextMgmtStatus = undefined;
+    return { status, json: { error: { message: 'management endpoint unavailable' } } };
   }
 
   /** Is `access` a live (unrevoked) access token? Used by the api + couch-token guards. */
@@ -143,11 +156,13 @@ export class FakeAuthServer {
 
   /** GET /api/memories -> { data:[{name,entries,folderCount,updated}] }. */
   listMemories(): AuthReply {
-    return { status: 200, json: { data: this.memories } };
+    return this.takeMgmtFailure() ?? { status: 200, json: { data: this.memories } };
   }
 
   /** POST /api/memories { name } -> 201 (adds an empty memory). */
   createMemory(body?: string): AuthReply {
+    const failed = this.takeMgmtFailure();
+    if (failed) return failed;
     const name = (JSON.parse(body ?? '{}') as { name?: string }).name ?? '';
     if (!name) return { status: 400, json: { error: { message: 'name required' } } };
     if (!this.memories.some((m) => m.name === name))
