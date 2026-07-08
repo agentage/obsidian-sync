@@ -2,7 +2,8 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['src/**/*.test.ts'],
+    // src unit tests + the assembled-plugin integration harness (test/**) run in one pass.
+    include: ['src/**/*.test.ts', 'test/**/*.test.ts'],
     testTimeout: 30000, // couch replication tests exercise retry/backoff timing
     coverage: {
       provider: 'v8',
