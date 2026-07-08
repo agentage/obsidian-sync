@@ -355,6 +355,32 @@ describe('tombstone-409 - edit wins over a stale delete', () => {
   });
 });
 
+describe('pre-DELETE content-rev mismatch - edit wins before any DELETE is issued', () => {
+  it('abandons the deletion with no DELETE request when couch already advanced the content', async () => {
+    const vault = new FakeVault(); // file already gone locally
+    const state = new CouchState(
+      () => undefined,
+      async () => {}
+    );
+    await state.setRev('race.md', 'h:v1'); // we knew v1
+    const couch = makeSync(vault, state);
+
+    let deleteCalls = 0;
+    handler = (url, method) => {
+      if (url.includes('f%3Arace.md') && method === 'DELETE') {
+        deleteCalls++;
+        return res(200, { ok: true });
+      }
+      if (url.includes('f%3Arace.md')) return res(200, fileDoc('race.md', '2-a', ['h:v2']));
+      return res(404, {});
+    };
+    await couch.pushAll();
+    expect(deleteCalls).toBe(0); // abandoned before any DELETE - content already moved on
+    expect(state.pendingDeletePaths()).toEqual([]); // never queued
+    expect(state.revFor('race.md')).toBeUndefined(); // rev dropped -> not re-detected
+  });
+});
+
 describe('a locally-absent path deletes without error', () => {
   it('treats a doc already absent on the server as an idempotent success', async () => {
     const vault = new FakeVault();
