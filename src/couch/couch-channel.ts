@@ -28,6 +28,12 @@ export class CouchChannel {
     return !!this.sync;
   }
 
+  /** Queued outgoing changes (failed live pushes + deletes) waiting for the next tick; 0 when
+   * no controller is live. The honest count the sync popup can show without a network round-trip. */
+  pendingCount(): number {
+    return this.sync?.pendingCount() ?? 0;
+  }
+
   tick(): Promise<void> {
     return this.sync?.tick() ?? Promise.resolve();
   }
