@@ -211,14 +211,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
       () => Date.now()
     );
     const authorize: CouchAuthorize = () => tokenClient.token();
-    const key = `${this.activeFqdn}:${memory}`;
-    const state = new CouchState(
-      () => this.settings.couchState[key],
-      async (s) => {
-        this.settings.couchState[key] = s;
-        await this.saveSettings();
-      }
-    );
+    const state = this.couchStateFor(memory);
     return new CouchSync(
       this.app.vault,
       { endpoint: ch.endpoint, db: ch.db },
@@ -229,14 +222,23 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     );
   }
 
+  /** The persisted couch state for `memory`, keyed by (host, memory). Loaded the same way for
+   * the live controller and the offline preview count, so both read the same push-rev cache. */
+  private couchStateFor(memory: string): CouchState {
+    const key = `${this.activeFqdn}:${memory}`;
+    return new CouchState(
+      () => this.settings.couchState[key],
+      async (s) => {
+        this.settings.couchState[key] = s;
+        await this.saveSettings();
+      }
+    );
+  }
+
   // --- site host (SettingsHost) ---
   /** The host every origin is derived from this session. */
   activeSiteFqdn(): string {
     return this.activeFqdn;
-  }
-  /** The host the CURRENT settings resolve to (differs from active until a restart). */
-  pendingSiteFqdn(): string {
-    return resolveSiteFqdn(this.settings.siteFqdn, ENV_SITE_FQDN);
   }
   private origin(sub: string): string {
     return `https://${sub}.${this.activeFqdn}`;
@@ -648,12 +650,18 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     return this.couchSyncNow(ch, chosen);
   }
 
-  // Non-mutating preview of the next sync for the popup: the honest couch outgoing count (queued
-  // local changes). firstSync = no memory chosen / not signed in yet, so nothing to preview.
+  // Non-mutating preview of the next sync for the popup: the HONEST couch outgoing count = local
+  // md files whose content-rev differs from (or is absent from) the chosen memory's push-rev cache,
+  // plus cached paths deleted locally. On a fresh memory (empty cache) that is EVERY md file - so
+  // the popup no longer says "0 to send" before the first push. Computed with no controller + no
+  // network, reusing the exact rev source pushAll uses (CouchSync.countOutgoing). firstSync = no
+  // memory chosen / not signed in yet, so nothing to preview.
   private async previewSync(): Promise<SyncPreview> {
+    const chosen = normalizeVaultName(this.settings.vault);
     const token = await this.auth.getValidToken();
-    if (!token || !normalizeVaultName(this.settings.vault)) return { pending: 0, firstSync: true };
-    return { pending: this.couchChannel.pendingCount(), firstSync: false };
+    if (!token || !chosen) return { pending: 0, firstSync: true };
+    const pending = await CouchSync.countOutgoing(this.app.vault, this.couchStateFor(chosen));
+    return { pending, firstSync: false };
   }
 
   // Auto-sync once signed in WITH a memory chosen. `withModal` shows the file-count

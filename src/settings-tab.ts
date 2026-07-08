@@ -1,4 +1,4 @@
-import { type App, Notice, PluginSettingTab, Setting, debounce } from 'obsidian';
+import { type App, PluginSettingTab, Setting, debounce } from 'obsidian';
 import {
   CONNECT_URL,
   PROD_SITE_FQDN,
@@ -19,31 +19,19 @@ export interface SettingsHost {
   applyConfig(): Promise<ApplyResult>;
   /** Open the memory chooser popup (pick an existing memory or create a new one). */
   chooseMemory(): void;
-  /** The site host every origin derives from this session. */
+  /** The site host every origin derives from this session (drives the non-prod banner). */
   activeSiteFqdn(): string;
-  /** The host the current settings resolve to (applies on the next Obsidian restart). */
-  pendingSiteFqdn(): string;
 }
 
 export class AgentageMemorySettingTab extends PluginSettingTab {
   private host: SettingsHost;
   private status?: HTMLElement;
-  private hostState?: HTMLElement;
   private writeDebounced: () => void;
-  private notifyRestartDebounced: () => void;
 
   constructor(app: App, host: SettingsHost) {
     super(app, host as unknown as never);
     this.host = host;
     this.writeDebounced = debounce(() => void this.write(), 700, true);
-    this.notifyRestartDebounced = debounce(
-      () => {
-        if (this.host.pendingSiteFqdn() !== this.host.activeSiteFqdn())
-          new Notice('Agentage Sync: restart Obsidian to apply the new host.');
-      },
-      900,
-      true
-    );
   }
 
   /** On any change: persist plugin data now, write vaults.json debounced. */
@@ -64,7 +52,6 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
     const { containerEl } = this;
     const s = this.host.settings;
     this.status = undefined;
-    this.hostState = undefined;
     containerEl.empty();
     containerEl.addClass('ams-settings');
 
@@ -142,48 +129,8 @@ export class AgentageMemorySettingTab extends PluginSettingTab {
       docs.appendText('.');
     }
 
-    // ---- Advanced (testing options) ----
-    new Setting(containerEl)
-      .setName('Advanced')
-      .setDesc('Show testing options.')
-      .addToggle((t) =>
-        t.setValue(s.showAdvanced).onChange((v) => {
-          s.showAdvanced = v;
-          void this.host.saveSettings();
-          this.display();
-        })
-      );
-    if (s.showAdvanced) {
-      new Setting(containerEl)
-        .setName('Site host')
-        .setDesc('For testing against dev (e.g. dev.agentage.io). Empty = production.')
-        .addText((t) =>
-          t
-            .setPlaceholder(PROD_SITE_FQDN)
-            .setValue(s.siteFqdn)
-            .onChange((v) => {
-              s.siteFqdn = v;
-              // Plugin-local (data.json only, never vaults.json); applied on the next restart.
-              void this.host.saveSettings();
-              this.renderHostState();
-              this.notifyRestartDebounced();
-            })
-        );
-      this.hostState = containerEl.createDiv({ cls: 'ams-hint' });
-      this.renderHostState();
-    }
-  }
-
-  /** "Active host: x" line under the Site host field, plus the restart hint when it differs. */
-  private renderHostState(): void {
-    if (!this.hostState) return;
-    const active = this.host.activeSiteFqdn();
-    const pending = this.host.pendingSiteFqdn();
-    this.hostState.setText(
-      pending === active
-        ? `Active host: ${active}`
-        : `Active host: ${active}. Restart Obsidian to apply ${pending}.`
-    );
+    // The dev/testing host override (siteFqdn) is intentionally NOT editable here - set it
+    // directly in data.json for a dev vault; it applies on the next Obsidian restart.
   }
 
   /** Add/remove an MCP scope, then persist. */

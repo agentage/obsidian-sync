@@ -1,13 +1,14 @@
 import { type App, Modal, Setting } from 'obsidian';
 
 export interface SyncPreview {
-  pending: number; // local changes queued to send up (couch pending push + delete queue)
-  firstSync: boolean; // no sync cursor yet - first sync sets things up
+  pending: number; // local md files the next sync would push up (content differs from the push cache)
+  firstSync: boolean; // no memory chosen / not signed in yet - nothing to preview
 }
 
 // The post-sign-in sync popup: on the couch channel the incoming count is only known after a
-// pull, so we show the honest outgoing figure (queued local changes) then run the live sync and
-// report the result. Informational + non-blocking (the sync auto-starts).
+// pull, so we show the honest outgoing figure (local files whose content differs from what was
+// last pushed - EVERY md file on a fresh memory) then run the live sync and report the result.
+// Informational + non-blocking (the sync auto-starts).
 class SyncPreviewModal extends Modal {
   constructor(
     app: App,

@@ -1,6 +1,7 @@
 import { requestUrl, TFile, type Vault } from 'obsidian';
 import {
   contentRev,
+  contentRevOf,
   encodeFile,
   fileId,
   leafIdsOf,
@@ -38,9 +39,39 @@ export interface SyncResult {
   error?: string; // first error message when either side failed
 }
 
+// The minimal read surface countOutgoing needs: the vault's md files + their content, and the
+// persisted push-rev cache. Lets the preview compute the outgoing count with NO live controller
+// and NO network (the same seam the tests drive).
+export interface OutgoingVault {
+  getMarkdownFiles(): { path: string }[];
+  read(file: { path: string }): Promise<string>;
+}
+export interface OutgoingState {
+  revFor(path: string): string | undefined;
+  knownPaths(): string[];
+}
+
 export class CouchSync {
   private pulling = false;
   private suppress = new Set<string>(); // paths being written by a pull (skip their push)
+
+  // The honest "to send" count for the sync popup, computed from vault content alone (no network,
+  // no controller). A file counts when its current content-rev is absent-from / differs-from the
+  // push-rev cache (a push pushAll would send) - on a fresh memory (empty cache) that is EVERY md
+  // file. A cached path no longer present in the vault counts as a delete (mirrors
+  // reconcileDeletions). Reuses contentRevOf (the exact rev pushFile caches) so it can never drift
+  // from what pushAll actually sends.
+  static async countOutgoing(vault: OutgoingVault, state: OutgoingState): Promise<number> {
+    const md = vault.getMarkdownFiles();
+    const present = new Set(md.map((f) => f.path));
+    let pushes = 0;
+    for (const f of md) {
+      const rev = await contentRevOf(await vault.read(f));
+      if (state.revFor(f.path) !== rev) pushes++;
+    }
+    const deletes = state.knownPaths().filter((p) => !present.has(p)).length;
+    return pushes + deletes;
+  }
 
   constructor(
     private vault: Vault,
@@ -106,9 +137,10 @@ export class CouchSync {
     const af = this.vault.getAbstractFileByPath(path);
     if (!(af instanceof TFile) || af.extension !== 'md') return;
     const body = await this.vault.read(af);
-    const { leaves, fileDoc } = await encodeFile(path, body);
-    const rev = contentRev(fileDoc);
+    // Same rev source countOutgoing uses, so the preview count can never drift from what we push.
+    const rev = await contentRevOf(body);
     if (this.state.revFor(path) === rev) return; // this exact content is already pushed
+    const { leaves, fileDoc } = await encodeFile(path, body);
     const cur = await this.getDoc(fileDoc._id);
     if (cur && !cur._deleted && JSON.stringify(cur.leaves) === JSON.stringify(fileDoc.leaves)) {
       await this.state.setRev(path, rev); // remote already converged; cache so we skip next time

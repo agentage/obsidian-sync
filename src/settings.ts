@@ -30,11 +30,10 @@ export interface AgentageMemorySettings {
   mcp: McpScope[];
   /** Dir holding vaults.json (memory-core: AGENTAGE_CONFIG_DIR or ~/.agentage). */
   configDir: string;
-  /** UI only - reveal the advanced fields (not written to vaults.json). */
-  showAdvanced: boolean;
   /** Plugin-local - the vault name last written to vaults.json, for renames. */
   writtenVaultName: string;
-  /** Site host override for testing against dev (e.g. dev.agentage.io). Empty = env-or-prod. */
+  /** Dev/testing host override, set directly in data.json (no on-page editor). Empty = env-or-prod.
+   * Read once at load by resolveSiteFqdn; applies on the next Obsidian restart. */
   siteFqdn: string;
   /** Per-(host, memory) couch sync state (pull cursor + push-rev cache + pending pushes),
    * keyed "<host>:<memory>". Plugin-local; never written to vaults.json. */
@@ -86,7 +85,6 @@ export const DEFAULT_SETTINGS: AgentageMemorySettings = {
   origin: { remote: AGENTAGE_REMOTE, interval: 5, ignore: [] },
   mcp: ['remote'], // expose to AI apps over MCP by default (local MCP is out of scope here)
   configDir: '~/.agentage',
-  showAdvanced: false,
   writtenVaultName: '',
   siteFqdn: '',
   couchState: {},
