@@ -304,6 +304,12 @@ export class CouchSync {
     }
   }
 
+  // Queued outgoing changes: live pushes + deletes that failed and await the next tick's retry.
+  // The honest "to send" count for the sync popup (no network round-trip).
+  pendingCount(): number {
+    return this.state.pendingPaths().length + this.state.pendingDeletePaths().length;
+  }
+
   async tick(): Promise<void> {
     await this.flushPending();
     try {

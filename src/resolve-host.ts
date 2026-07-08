@@ -1,7 +1,8 @@
-// Host resolution (R7): the plugin knows one bootstrap host and resolves its
-// per-user/per-region git endpoint from GET /.well-known/agentage-sync, caching it
-// for the response ttl (default 1h). fetch + clock are INJECTED so it unit-tests in
-// Node without Obsidian or a live server.
+// Host resolution (R7): the plugin knows one bootstrap host and resolves its per-user/
+// per-region sync endpoints from GET /.well-known/agentage-sync, caching it for the
+// response ttl (default 1h). fetch + clock are INJECTED so it unit-tests in Node without
+// Obsidian or a live server. Couch is the ONLY device channel; a memory the server has not
+// advertised on the couch channel resolves to an explicit error, never a silent fallback.
 
 // A couch-channel memory advertised in the resolution: its per-memory db on the shared
 // cluster. The JWT is NOT here - the client mints it from `couchTokenUrl` (the auth
@@ -12,21 +13,19 @@ export interface CouchVaultResolution {
 }
 
 export interface SyncResolution {
-  gitEndpoint: string;
   region: string;
-  vaults: string[];
   ttl: number;
-  // Present only when the user has >=1 couch-channel memory. A vault appears in EITHER
-  // `vaults` (git) or `couchVaults` (couch), never both - one channel per memory. Absent
-  // => today's git-only shape, parsed exactly as before (old-server back-compat).
+  // Present only when the user has >=1 couch-channel memory. A memory absent here has not been
+  // migrated to the couch channel yet (server flip pending) and resolves to an error state.
   couchEndpoint?: string;
   couchTokenUrl?: string;
   couchVaults?: CouchVaultResolution[];
 }
 
-/** The sync channel a resolved memory uses. Exactly one per memory. */
+// The sync channel a resolved memory uses. Couch is the only device channel; a memory not yet
+// advertised on it is an explicit error state (server update pending), never a silent no-op.
 export type VaultChannel =
-  { channel: 'git' } | { channel: 'couch'; endpoint: string; db: string; tokenUrl: string };
+  { channel: 'couch'; endpoint: string; db: string; tokenUrl: string } | { channel: 'error' };
 
 export type FetchJson = (url: string, token: string) => Promise<{ status: number; json: unknown }>;
 export type Clock = () => number;
@@ -35,7 +34,7 @@ const WELL_KNOWN = '/.well-known/agentage-sync';
 
 // Server field names (packages/sync/src/resolution.ts): couch_endpoint, couch_token_url,
 // couch_vaults[{ vault, db }]. Parsed only when all three are present + well-formed, so a
-// partial/old payload degrades to git rather than half-advertising a couch channel.
+// partial/old payload degrades to the error channel rather than half-advertising couch.
 function parseCouchVault(raw: unknown): CouchVaultResolution | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
@@ -47,15 +46,9 @@ function parseCouchVault(raw: unknown): CouchVaultResolution | null {
 export function parseResolution(raw: unknown): SyncResolution {
   if (!raw || typeof raw !== 'object') throw new Error('resolution: not an object');
   const r = raw as Record<string, unknown>;
-  const gitEndpoint = r.git_endpoint;
-  if (typeof gitEndpoint !== 'string' || !gitEndpoint)
-    throw new Error('resolution: missing git_endpoint');
   const region = typeof r.region === 'string' ? r.region : 'default';
-  const vaults = Array.isArray(r.vaults)
-    ? r.vaults.filter((v): v is string => typeof v === 'string')
-    : [];
   const ttl = typeof r.ttl === 'number' && r.ttl > 0 ? r.ttl : 3600;
-  const base: SyncResolution = { gitEndpoint, region, vaults, ttl };
+  const base: SyncResolution = { region, ttl };
   const couchEndpoint = typeof r.couch_endpoint === 'string' ? r.couch_endpoint : '';
   const couchTokenUrl = typeof r.couch_token_url === 'string' ? r.couch_token_url : '';
   const couchVaults = Array.isArray(r.couch_vaults)
@@ -69,8 +62,9 @@ export function parseResolution(raw: unknown): SyncResolution {
   return base;
 }
 
-/** Which sync channel a resolved memory uses. A vault named in `couchVaults` is on the
- * couch channel (endpoint/db/tokenUrl attached); everything else defaults to git. */
+/** Which sync channel a resolved memory uses. A vault named in `couchVaults` is on the couch
+ * channel (endpoint/db/tokenUrl attached); everything else is an error (not yet on the couch
+ * channel - the server flip is pending), never a silent git fallback. */
 export function channelForVault(res: SyncResolution, vault: string): VaultChannel {
   const couch = res.couchVaults?.find((v) => v.vault === vault);
   if (couch && res.couchEndpoint && res.couchTokenUrl)
@@ -80,39 +74,7 @@ export function channelForVault(res: SyncResolution, vault: string): VaultChanne
       db: couch.db,
       tokenUrl: res.couchTokenUrl,
     };
-  return { channel: 'git' };
-}
-
-/** Build the per-vault git remote URL from a resolved endpoint. Token is NEVER here. */
-export function buildRepoUrl(gitEndpoint: string, vault: string): string {
-  return `${gitEndpoint.replace(/\/+$/, '')}/${vault}.git`;
-}
-
-/** The agentage git memory a `.git/config` is bound to via its origin remote, or null when the
- * folder has no origin remote on `gitEndpoint`. Inverse of buildRepoUrl - used to guard a
- * couch-routed memory from silently syncing into a folder still bound to a git memory. */
-export function gitMemoryFromConfig(gitConfig: string, gitEndpoint: string): string | null {
-  const url = originRemoteUrl(gitConfig);
-  if (!url) return null;
-  const base = gitEndpoint.replace(/\/+$/, '');
-  if (!url.startsWith(`${base}/`)) return null;
-  const match = /^([^/]+)\.git$/.exec(url.slice(base.length + 1));
-  return match ? match[1] : null;
-}
-
-// Minimal ini scan: the first `url = ...` under [remote "origin"] (what isomorphic-git writes).
-function originRemoteUrl(gitConfig: string): string | null {
-  let inOrigin = false;
-  for (const raw of gitConfig.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (line.startsWith('[')) {
-      inOrigin = /^\[remote "origin"\]$/.test(line);
-      continue;
-    }
-    const match = inOrigin ? /^url\s*=\s*(.+)$/.exec(line) : null;
-    if (match) return match[1].trim();
-  }
-  return null;
+  return { channel: 'error' };
 }
 
 export class HostResolver {

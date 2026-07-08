@@ -122,8 +122,8 @@ beforeEach(() => {
 });
 
 describe('sync-preview-modal', () => {
-  it('shows the both-way counts, then runs the sync and reports its result', async () => {
-    const preview: SyncPreview = { incoming: 2, outgoing: 1, firstSync: false };
+  it('shows the couch pending-push count, then runs the sync and reports its result', async () => {
+    const preview: SyncPreview = { pending: 3, firstSync: false };
     const runSync = vi.fn(okSync);
     openSyncPreview(app, async () => preview, runSync);
     const m = lastModal();
@@ -131,19 +131,18 @@ describe('sync-preview-modal', () => {
 
     expect(m.titleEl.text).toBe('Agentage Sync');
     const text = allText(m.contentEl);
-    expect(text).toContain('2 file(s) to receive');
-    expect(text).toContain('1 file(s) to send');
+    expect(text).toContain('3 local change(s) to send');
     expect(text).toContain('personal: synced + pushed');
     expect(text).not.toContain('Checking what needs to sync'); // progress line was removed
     expect(runSync).toHaveBeenCalledOnce();
   });
 
-  it('shows the first-sync line instead of counts when no local repo exists yet', async () => {
-    openSyncPreview(app, async () => ({ incoming: 0, outgoing: 0, firstSync: true }), okSync);
+  it('shows the first-sync line instead of the count when nothing is chosen yet', async () => {
+    openSyncPreview(app, async () => ({ pending: 0, firstSync: true }), okSync);
     await lastModal().onOpenDone;
     const text = allText(lastModal().contentEl);
     expect(text).toContain('First sync');
-    expect(text).not.toContain('to receive');
+    expect(text).not.toContain('to send');
   });
 
   it('reports a preview failure and never starts the sync', async () => {
@@ -163,7 +162,7 @@ describe('sync-preview-modal', () => {
   it('surfaces a sync failure in the modal', async () => {
     openSyncPreview(
       app,
-      async () => ({ incoming: 0, outgoing: 0, firstSync: false }),
+      async () => ({ pending: 0, firstSync: false }),
       async () => {
         throw new Error('push denied');
       }
@@ -173,7 +172,7 @@ describe('sync-preview-modal', () => {
   });
 
   it('the Close button closes the modal and empties its content', async () => {
-    openSyncPreview(app, async () => ({ incoming: 0, outgoing: 0, firstSync: false }), okSync);
+    openSyncPreview(app, async () => ({ pending: 0, firstSync: false }), okSync);
     const m = lastModal();
     await m.onOpenDone;
     expect(h.clicks).toHaveLength(1);

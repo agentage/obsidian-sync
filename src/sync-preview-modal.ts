@@ -1,13 +1,13 @@
 import { type App, Modal, Setting } from 'obsidian';
 
 export interface SyncPreview {
-  incoming: number; // files to receive from the cloud (a pull will change them)
-  outgoing: number; // local working changes to send up
-  firstSync: boolean; // no local repo yet - first sync sets things up
+  pending: number; // local changes queued to send up (couch pending push + delete queue)
+  firstSync: boolean; // no sync cursor yet - first sync sets things up
 }
 
-// The post-sign-in sync popup: shows how many files will sync each way, then runs the
-// sync and reports the result. Informational + non-blocking (the sync auto-starts).
+// The post-sign-in sync popup: on the couch channel the incoming count is only known after a
+// pull, so we show the honest outgoing figure (queued local changes) then run the live sync and
+// report the result. Informational + non-blocking (the sync auto-starts).
 class SyncPreviewModal extends Modal {
   constructor(
     app: App,
@@ -36,11 +36,10 @@ class SyncPreviewModal extends Modal {
     if (p.firstSync) {
       counts.createDiv({ text: '⟳ First sync - setting up your memory.' });
     } else {
-      counts.createDiv({ text: `↓ ${p.incoming} file(s) to receive (from cloud)` });
-      counts.createDiv({ text: `↑ ${p.outgoing} file(s) to send (to cloud)` });
+      counts.createDiv({ text: `↑ ${p.pending} local change(s) to send (to cloud)` });
     }
 
-    const statusEl = contentEl.createEl('p', { text: 'Syncing both ways…' });
+    const statusEl = contentEl.createEl('p', { text: 'Syncing…' });
     try {
       const r = await this.runSync();
       statusEl.setText(r.message);
