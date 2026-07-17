@@ -7,10 +7,10 @@ import { readFileSync } from 'node:fs';
 const readme = readFileSync('README.md', 'utf8');
 
 const required = [
-  'sync.agentage.io', // the discovery host the plugin contacts
+  'sync.agentage.io', // the single host the plugin contacts
   'agentage.io/privacy',
   'agentage.io/terms',
-  'js-yaml', // third-party attribution (MIT)
+  'isomorphic-git', // third-party attribution (MIT)
   'No calls until you act', // honest disclosure of the no-network-on-load gate
 ];
 // Hosts the shipped build never contacts must not be advertised (README⇄build

@@ -1,20 +1,46 @@
 import { describe, it, expect, vi } from 'vitest';
-import { HostResolver, parseResolution, channelForVault } from './resolve-host';
+import {
+  HostResolver,
+  parseResolution,
+  buildRepoUrl,
+  channelForVault,
+  gitMemoryFromConfig,
+} from './resolve-host';
 
 describe('resolve-host (R7 resolve + 1h cache)', () => {
-  it('parses a well-formed resolution and defaults ttl/region', () => {
-    expect(parseResolution({ region: 'eu', ttl: 60 })).toEqual({ region: 'eu', ttl: 60 });
-    expect(parseResolution({})).toMatchObject({ region: 'default', ttl: 3600 });
+  it('parses a well-formed resolution and defaults ttl/region/vaults', () => {
+    expect(
+      parseResolution({ git_endpoint: 'https://sync-eu.x/u', region: 'eu', vaults: ['a'], ttl: 60 })
+    ).toEqual({
+      gitEndpoint: 'https://sync-eu.x/u',
+      region: 'eu',
+      vaults: ['a'],
+      ttl: 60,
+    });
+    expect(parseResolution({ git_endpoint: 'https://sync-eu.x/u' })).toMatchObject({
+      region: 'default',
+      vaults: [],
+      ttl: 3600,
+    });
   });
 
   it('rejects a malformed resolution', () => {
+    expect(() => parseResolution({})).toThrow();
     expect(() => parseResolution(null)).toThrow();
-    expect(() => parseResolution(42)).toThrow();
+  });
+
+  it('builds the per-vault repo URL (no token)', () => {
+    expect(buildRepoUrl('https://sync-eu.x/u/', 'personal')).toBe(
+      'https://sync-eu.x/u/personal.git'
+    );
   });
 
   it('caches within ttl and re-fetches after it expires', async () => {
     let now = 1_000_000;
-    const fetchJson = vi.fn(async () => ({ status: 200, json: { ttl: 3600 } }));
+    const fetchJson = vi.fn(async () => ({
+      status: 200,
+      json: { git_endpoint: 'https://sync-eu.x/u', ttl: 3600 },
+    }));
     const r = new HostResolver('https://sync.x', fetchJson, () => now);
 
     await r.resolve('tok');
@@ -28,17 +54,19 @@ describe('resolve-host (R7 resolve + 1h cache)', () => {
 
   it('throws on 401 and re-fetches after invalidate()', async () => {
     let status = 401;
-    const fetchJson = vi.fn(async () => ({ status, json: {} }));
+    const fetchJson = vi.fn(async () => ({ status, json: { git_endpoint: 'https://e/u' } }));
     const r = new HostResolver('https://sync.x', fetchJson, () => 0);
     await expect(r.resolve('bad')).rejects.toThrow('unauthorized');
     status = 200;
     r.invalidate();
-    await expect(r.resolve('good')).resolves.toMatchObject({ region: 'default' });
+    await expect(r.resolve('good')).resolves.toMatchObject({ gitEndpoint: 'https://e/u' });
   });
 });
 
-describe('resolve-host - couch channel parsing', () => {
+describe('resolve-host - couch channel parsing (additive)', () => {
   const couchPayload = {
+    git_endpoint: 'https://sync.x/u',
+    vaults: ['notes'],
     couch_endpoint: 'https://couch.x',
     couch_token_url: 'https://auth.x/account/couch-token',
     couch_vaults: [{ vault: 'work', db: 'mem_abc' }],
@@ -46,13 +74,14 @@ describe('resolve-host - couch channel parsing', () => {
 
   it('parses couch fields when endpoint + token url + vaults are all present', () => {
     const r = parseResolution(couchPayload);
+    expect(r.vaults).toEqual(['notes']);
     expect(r.couchEndpoint).toBe('https://couch.x');
     expect(r.couchTokenUrl).toBe('https://auth.x/account/couch-token');
     expect(r.couchVaults).toEqual([{ vault: 'work', db: 'mem_abc' }]);
   });
 
-  it('degrades to no-couch when the payload has no couch fields (old server)', () => {
-    const r = parseResolution({ region: 'eu' });
+  it('degrades to git-only when the payload has no couch fields (old server)', () => {
+    const r = parseResolution({ git_endpoint: 'https://sync.x/u', vaults: ['notes', 'work'] });
     expect(r.couchEndpoint).toBeUndefined();
     expect(r.couchTokenUrl).toBeUndefined();
     expect(r.couchVaults).toBeUndefined();
@@ -64,7 +93,7 @@ describe('resolve-host - couch channel parsing', () => {
     expect(r.couchVaults).toBeUndefined();
   });
 
-  it('filters malformed couch_vault entries; empties collapse to no-couch', () => {
+  it('filters malformed couch_vault entries; empties collapse to git-only', () => {
     const r = parseResolution({
       ...couchPayload,
       couch_vaults: [{ vault: 'work' }, { db: 'x' }, 42, null],
@@ -73,7 +102,7 @@ describe('resolve-host - couch channel parsing', () => {
     expect(r.couchEndpoint).toBeUndefined();
   });
 
-  it('channelForVault routes a couch vault to couch and everything else to error', () => {
+  it('channelForVault routes a couch vault to couch and everything else to git', () => {
     const r = parseResolution(couchPayload);
     expect(channelForVault(r, 'work')).toEqual({
       channel: 'couch',
@@ -81,12 +110,38 @@ describe('resolve-host - couch channel parsing', () => {
       db: 'mem_abc',
       tokenUrl: 'https://auth.x/account/couch-token',
     });
-    // A memory not advertised on the couch channel is an explicit error, not a git fallback.
-    expect(channelForVault(r, 'notes')).toEqual({ channel: 'error' });
+    expect(channelForVault(r, 'notes')).toEqual({ channel: 'git' });
   });
 
-  it('channelForVault is error for a resolution with no couch channel (server flip pending)', () => {
-    const r = parseResolution({ region: 'eu' });
-    expect(channelForVault(r, 'notes')).toEqual({ channel: 'error' });
+  it('channelForVault is git for a git-only resolution', () => {
+    const r = parseResolution({ git_endpoint: 'https://sync.x/u', vaults: ['notes'] });
+    expect(channelForVault(r, 'notes')).toEqual({ channel: 'git' });
+  });
+});
+
+describe('gitMemoryFromConfig - the git memory a folder is bound to', () => {
+  const cfg = (url: string) =>
+    `[core]\n\trepositoryformatversion = 0\n[remote "origin"]\n\turl = ${url}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n`;
+
+  it('extracts the memory from an origin remote on the resolved endpoint', () => {
+    expect(gitMemoryFromConfig(cfg('https://sync.x/u/default.git'), 'https://sync.x/u')).toBe(
+      'default'
+    );
+  });
+
+  it('tolerates a trailing slash on the endpoint', () => {
+    expect(gitMemoryFromConfig(cfg('https://sync.x/u/default.git'), 'https://sync.x/u/')).toBe(
+      'default'
+    );
+  });
+
+  it('returns null for a remote on a different host (a user`s own git repo)', () => {
+    expect(gitMemoryFromConfig(cfg('https://github.com/me/notes.git'), 'https://sync.x/u')).toBe(
+      null
+    );
+  });
+
+  it('returns null when there is no origin remote', () => {
+    expect(gitMemoryFromConfig('[core]\n\tbare = false\n', 'https://sync.x/u')).toBe(null);
   });
 });

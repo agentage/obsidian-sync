@@ -15,7 +15,7 @@ export interface OriginSettings {
 
 export interface AgentageMemorySettings {
   /** The server memory (vault) this Obsidian vault syncs into - picked or created in
-   * settings. Empty = not chosen yet (syncNow opens the memory picker). */
+   * settings. Empty = not chosen yet (syncNow then falls back to the first server vault). */
   vault: string;
   /** memory-core vault name (the key in vaults.json). */
   vaultName: string;
@@ -75,7 +75,7 @@ export const VAULTS_SCHEMA_URL = 'https://memory.agentage.io/schema/vaults.json'
 export const AGENTAGE_REMOTE = 'agentage';
 
 export const DEFAULT_SETTINGS: AgentageMemorySettings = {
-  vault: '', // chosen/created server memory; empty -> syncNow opens the memory picker
+  vault: '', // chosen/created server memory; empty -> first server vault (see syncNow)
   vaultName: '', // empty -> derived from the Obsidian vault name (see main.vaultName())
   path: '',
   makeDefault: true,

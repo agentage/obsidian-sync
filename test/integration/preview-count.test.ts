@@ -39,7 +39,7 @@ describe('sync-preview count is honest on a FRESH memory (the first-sync bug)', 
     // the failed-push retry queue, which is empty on a fresh pick and reported "0 to send").
     const before = await preview(h);
     expect(before.firstSync).toBe(false);
-    expect(before.pending).toBe(3);
+    expect(before.outgoing).toBe(3);
 
     // Run the real sync (pushes all three to the fake couch).
     const result = await h.plugin.syncNow();
@@ -48,7 +48,7 @@ describe('sync-preview count is honest on a FRESH memory (the first-sync bug)', 
 
     // AFTER a full sync: the push-rev cache is warm, so the preview honestly reports nothing to send.
     const after = await preview(h);
-    expect(after.pending).toBe(0);
+    expect(after.outgoing).toBe(0);
   });
 
   it('firstSync=true when no memory is chosen yet', async () => {
@@ -56,6 +56,6 @@ describe('sync-preview count is honest on a FRESH memory (the first-sync bug)', 
     // Signed in but selectVault not called -> nothing to preview.
     const p = await preview(h);
     expect(p.firstSync).toBe(true);
-    expect(p.pending).toBe(0);
+    expect(p.outgoing).toBe(0);
   });
 });

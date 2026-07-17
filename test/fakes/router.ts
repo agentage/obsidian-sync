@@ -56,14 +56,15 @@ export class Router {
     } as unknown as RequestUrlResponse;
   }
 
-  // The couch resolution (GET sync.<fqdn>/.well-known/agentage-sync). Advertises the primary
-  // couch-channel memory plus any extra ones, all on this router's couch origin + token url.
+  // The dual-channel resolution (GET sync.<fqdn>/.well-known/agentage-sync): git_endpoint is
+  // always present (git = main channel); the couch fields advertise the couch-channel memories.
   private resolution(): unknown {
     const couch_vaults = [
       { vault: this.opts.memoryName, db: this.opts.couch.db },
       ...(this.opts.extraCouch ?? []).map((e) => ({ vault: e.memory, db: e.couch.db })),
     ];
     return {
+      git_endpoint: `https://sync.${this.opts.fqdn}`,
       region: 'default',
       ttl: 3600,
       couch_endpoint: this.couchOrigin,

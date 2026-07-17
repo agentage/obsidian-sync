@@ -1,4 +1,5 @@
 import { FileSystemAdapter, Menu, Notice, Platform, Plugin, TFile, requestUrl } from 'obsidian';
+import type { FsClient, MergeDriverCallback } from 'isomorphic-git';
 import {
   type AgentageMemorySettings,
   type VaultInfo,
@@ -10,6 +11,11 @@ import {
 } from './settings';
 import { AgentageMemorySettingTab, type SettingsHost } from './settings-tab';
 import { applyVaultsConfig, type ApplyResult } from './vaults-config';
+import { createGitClient } from './git/git-client';
+import { requestUrlHttpClient } from './git/http-requesturl';
+import { VaultFs } from './git/vault-fs';
+import { mergeNote } from './git/merge-note';
+import { createSyncController, type SyncController, type SyncStatus } from './sync-controller';
 import { CALLBACK_ACTION, createAuthFlow, type AuthFlow } from './auth/auth-flow';
 import {
   createAuthStore,
@@ -23,7 +29,13 @@ import { createAuthJsonWriter, readAuthJsonState } from './auth/auth-json';
 import { startLoopbackServer } from './auth/loopback-server';
 import type { HttpPost } from './auth/oauth';
 import type { GetJson } from './auth/discovery';
-import { HostResolver, channelForVault, type SyncResolution } from './resolve-host';
+import {
+  HostResolver,
+  buildRepoUrl,
+  channelForVault,
+  gitMemoryFromConfig,
+  type SyncResolution,
+} from './resolve-host';
 import { openMemoryChooser } from './memory-chooser';
 import { openActionsMenu, type PluginAction } from './actions-menu';
 import { openSyncPreview, type SyncPreview } from './sync-preview-modal';
@@ -38,9 +50,12 @@ import { CouchTokenClient, type CouchTokenPost } from './couch/couch-token';
 // the setting needs an Obsidian restart because tokens + resolver are host-bound.
 const ENV_SITE_FQDN = typeof process !== 'undefined' ? process.env?.AGENTAGE_SITE_FQDN : undefined;
 
-// Status-bar sync state. Couch is the only device channel; 'conflict' is retained as a distinct
-// error tone for parity with the status dot even though the couch channel resolves conflicts server-side.
-type SyncStatus = 'idle' | 'syncing' | 'error' | 'conflict';
+// 3-way merge driver: split-YAML field-LWW + diff3 body (see git/merge-note).
+const agentageMergeDriver: MergeDriverCallback = ({ contents }) => {
+  const [base, ours, theirs] = contents;
+  const { text, clean } = mergeNote(base, ours, theirs);
+  return { cleanMerge: clean, mergedText: text };
+};
 
 const safeJson = (text: string): unknown => {
   try {
@@ -67,7 +82,7 @@ const memoryToVaultInfo = (m: unknown): VaultInfo | null => {
 };
 
 // Agentage Sync plugin. Config page (writes ~/.agentage/vaults.json) + OAuth sign-in
-// (token in secretStorage/localStorage + ~/.agentage/auth.json) + live CouchDB sync.
+// (token in secretStorage/localStorage + ~/.agentage/auth.json) + desktop git sync.
 export default class AgentageMemoryPlugin extends Plugin implements SettingsHost {
   settings: AgentageMemorySettings = DEFAULT_SETTINGS;
   isDesktop = Platform.isDesktopApp;
@@ -194,6 +209,19 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     }
     this.setStatusBar('idle');
     return { ok: true, message: `${memory}: couch synced` };
+  }
+
+  /** The agentage git memory this vault folder's `.git` is bound to, or null when there is no
+   * `.git/config` or its origin remote is not on `gitEndpoint`. Reads via the raw adapter since
+   * `.git` is outside Obsidian's TFile index. Any read error degrades to null (do not block). */
+  private async gitBoundMemory(gitEndpoint: string): Promise<string | null> {
+    const adapter = this.app.vault.adapter;
+    try {
+      if (!(await adapter.exists('.git/config'))) return null;
+      return gitMemoryFromConfig(await adapter.read('.git/config'), gitEndpoint);
+    } catch {
+      return null;
+    }
   }
 
   /** Build a CouchSync for `memory`: mint the per-memory JWT on demand (cached, re-minted on
@@ -535,7 +563,7 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
   }
 
   /** Create a new server memory via POST api.<fqdn>/api/memories (the management API;
-   * the sync channel never creates memories implicitly - R14). */
+   * the sync host stays a pure git transport and git push never creates - R14). */
   async createVault(name: string): Promise<{ ok: boolean; vault?: string; error?: string }> {
     const token = await this.auth.getValidToken();
     if (!token) return { ok: false, error: 'Sign in to Agentage first.' };
@@ -612,56 +640,118 @@ export default class AgentageMemoryPlugin extends Plugin implements SettingsHost
     this.refreshStatus();
   }
 
-  // The user-facing message shown when a chosen memory has not been migrated to the couch
-  // channel yet. Surfaced as a Notice + a red status dot, never a silent no-op.
-  private static readonly NOT_ON_COUCH =
-    'This memory is not on the new sync channel yet - server update pending.';
+  // Git fs runs over Obsidian's vault adapter on BOTH desktop and mobile (the proven
+  // obsidian-git pattern): the whole vault is the worktree, `.git` lives inside it,
+  // paths are vault-relative (dir=''). We do NOT use node:fs - a native
+  // `import('node:fs')` does not resolve in Obsidian's Electron renderer, which silently
+  // killed every sync right after host-resolve (resolve 200, then zero git requests).
+  private buildController(): SyncController {
+    const vfs = new VaultFs(this.app.vault, '.git') as unknown as FsClient;
+    return this.makeController(vfs, '', '.git');
+  }
+
+  private makeController(fs: FsClient, dir: string, gitdir?: string): SyncController {
+    const client = createGitClient({ fs, http: requestUrlHttpClient }, agentageMergeDriver);
+    return createSyncController({
+      client,
+      fs,
+      dir,
+      gitdir,
+      ignore: [this.app.vault.configDir],
+      now: () => new Date().toISOString(),
+      onStatus: (s, msg) => this.setStatusBar(s, msg),
+    });
+  }
 
   async syncNow(): Promise<{ ok: boolean; message: string }> {
     const token = await this.auth.getValidToken();
     if (!token) return { ok: false, message: 'Sign in to Agentage first.' };
+    let remote = this.settings.origin.remote.trim();
+    const managed = !remote || remote === 'agentage';
     const chosen = normalizeVaultName(this.settings.vault);
-    // Couch is the only device channel: the user must pick a memory explicitly - never guess
-    // which one to write to. No selection → open the chooser instead of syncing.
-    if (!chosen) {
+    // In managed mode the user must pick a memory explicitly - never guess which one to
+    // write to. No selection → open the chooser instead of syncing.
+    if (managed && !chosen) {
       this.chooseMemory();
       return { ok: false, message: 'Opening the memory picker. Choose one to sync into.' };
     }
-    let res: SyncResolution;
+    let syncedVault = chosen || this.vaultNameOf();
+    if (managed) {
+      let res: SyncResolution;
+      try {
+        res = await this.resolver.resolve(token);
+      } catch (e) {
+        this.setStatusBar('error', (e as Error).message);
+        return {
+          ok: false,
+          message: `Couldn't reach the agentage sync host: ${(e as Error).message}`,
+        };
+      }
+      syncedVault = chosen;
+      // Exactly one channel per memory: a resolution that advertises this memory on the couch
+      // channel routes to the couch controller; every other memory stays on the git path.
+      const ch = channelForVault(res, syncedVault);
+      if (ch.channel === 'couch') {
+        // A couch memory needs a git-free folder. If this folder is still a git working tree
+        // bound to a DIFFERENT git memory, couch-syncing into it silently mixes two memories in
+        // one folder - surface the cause instead of no-oping (never auto-delete the user's .git).
+        const gitMemory = await this.gitBoundMemory(res.gitEndpoint);
+        if (gitMemory && gitMemory !== syncedVault) {
+          const message =
+            `This folder is already synced as a git memory (${gitMemory}). A couch memory needs ` +
+            `its own (git-free) folder - open a new vault or remove the git binding.`;
+          new Notice(message);
+          return { ok: false, message };
+        }
+        this.lastVault = syncedVault;
+        return this.couchSyncNow(ch, syncedVault);
+      }
+      remote = buildRepoUrl(res.gitEndpoint, syncedVault);
+    }
+    // This memory is NOT couch: tear down any live couch controller so its live handlers + the
+    // 2s tick stop replicating the previous couch memory into (or out of) this git sync.
+    this.couchChannel.clear();
+    this.lastVault = syncedVault; // so "Open dashboard" points at the vault we actually synced
+    const ctrl = this.buildController();
     try {
-      res = await this.resolver.resolve(token);
+      const r = await ctrl.syncNow({ url: remote, token });
+      if (r.action === 'blocked') return { ok: false, message: r.message ?? 'blocked' };
+      if (r.conflicted.length)
+        return {
+          ok: false,
+          message: `Conflicts in ${r.conflicted.length} file(s) - see "Agentage Sync Conflicts".`,
+        };
+      // Unmergeable history (criss-cross): not pushed, no per-file markers - surface the reason.
+      if (!r.pushed && r.message) return { ok: false, message: r.message };
+      const bits = [r.action, r.committed ? 'committed' : '', r.pushed ? 'pushed' : ''].filter(
+        Boolean
+      );
+      return { ok: true, message: `${syncedVault}: ${bits.join(' + ')}` };
     } catch (e) {
-      this.setStatusBar('error', (e as Error).message);
-      return {
-        ok: false,
-        message: `Couldn't reach the agentage sync host: ${(e as Error).message}`,
-      };
+      return { ok: false, message: (e as Error).message };
     }
-    // Exactly one channel per memory. A memory the server advertises on the couch channel syncs
-    // live; a memory NOT yet advertised is an explicit error (server flip pending), never git.
-    const ch = channelForVault(res, chosen);
-    if (ch.channel !== 'couch') {
-      this.couchChannel.clear(); // stop replicating the previous memory into this folder
-      this.setStatusBar('error', AgentageMemoryPlugin.NOT_ON_COUCH);
-      new Notice(`Agentage Sync: ${AgentageMemoryPlugin.NOT_ON_COUCH}`);
-      return { ok: false, message: AgentageMemoryPlugin.NOT_ON_COUCH };
-    }
-    this.lastVault = chosen; // so "Open dashboard" points at the memory we actually synced
-    return this.couchSyncNow(ch, chosen);
   }
 
-  // Non-mutating preview of the next sync for the popup: the HONEST couch outgoing count = local
-  // md files whose content-rev differs from (or is absent from) the chosen memory's push-rev cache,
-  // plus cached paths deleted locally. On a fresh memory (empty cache) that is EVERY md file - so
-  // the popup no longer says "0 to send" before the first push. Computed with no controller + no
-  // network, reusing the exact rev source pushAll uses (CouchSync.countOutgoing). firstSync = no
-  // memory chosen / not signed in yet, so nothing to preview.
+  // Non-mutating preview of the next sync for the popup, routed per channel like syncNow.
+  // Git memories preview both directions via the controller. Couch memories show the HONEST
+  // outgoing count - local md whose content-rev differs from (or is absent from) the push-rev
+  // cache (EVERY md file on a fresh memory); incoming is omitted (only known after a pull).
   private async previewSync(): Promise<SyncPreview> {
-    const chosen = normalizeVaultName(this.settings.vault);
     const token = await this.auth.getValidToken();
-    if (!token || !chosen) return { pending: 0, firstSync: true };
-    const pending = await CouchSync.countOutgoing(this.app.vault, this.couchStateFor(chosen));
-    return { pending, firstSync: false };
+    if (!token) return { outgoing: 0, firstSync: true };
+    let remote = this.settings.origin.remote.trim();
+    const managed = !remote || remote === 'agentage';
+    const chosen = normalizeVaultName(this.settings.vault);
+    if (managed && !chosen) return { outgoing: 0, firstSync: true };
+    if (managed) {
+      const res = await this.resolver.resolve(token);
+      if (channelForVault(res, chosen).channel === 'couch') {
+        const outgoing = await CouchSync.countOutgoing(this.app.vault, this.couchStateFor(chosen));
+        return { outgoing, firstSync: false };
+      }
+      remote = buildRepoUrl(res.gitEndpoint, chosen);
+    }
+    return this.buildController().preview({ url: remote, token });
   }
 
   // Auto-sync once signed in WITH a memory chosen. `withModal` shows the file-count

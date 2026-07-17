@@ -23,16 +23,17 @@ describe('account lifecycle', () => {
   let h: Handles;
   afterEach(async () => h.teardown());
 
-  it('10. a non-couch memory is an explicit error (red dot), never a silent no-op or write', async () => {
+  it('10. a memory not on the couch channel routes to git and never touches couch', async () => {
     h = await bootSignedIn();
-    // Point the vault at a memory the resolution does NOT advertise on the couch channel.
+    // Dual-channel: a memory the resolution does NOT advertise on couch syncs via git. The
+    // fake serves no git smart-HTTP, so the git sync itself fails - what matters here is the
+    // couch side stays untouched and inert (no silent cross-channel write).
     await h.plugin.selectVault('not-migrated');
     const r = await h.plugin.syncNow();
 
-    expect(r.ok).toBe(false);
-    expect(r.message).toMatch(/not on the new sync channel yet/i); // the explicit server-flip message
-    expect(syncStateOf(h)).toBe('error'); // red dot, not idle/green
-    expect(couchActive(h)).toBe(false); // no live controller repointed at the un-migrated memory
+    expect(r.ok).toBe(false); // the git path surfaced its own error (no git server in the fake)
+    expect(r.message).not.toMatch(/not on the new sync channel/i); // couch-only error is gone
+    expect(couchActive(h)).toBe(false); // the git route tears down any live couch controller
     expect(h.couch.filePaths()).toEqual([]); // and crucially: nothing was written to couch
   });
 
