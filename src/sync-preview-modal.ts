@@ -1,14 +1,14 @@
 import { type App, Modal, Setting } from 'obsidian';
 
 export interface SyncPreview {
-  pending: number; // local md files the next sync would push up (content differs from the push cache)
+  incoming?: number; // git channel: files to receive from the cloud; couch omits it (only known after a pull)
+  outgoing: number; // local changes to send up (couch: content differs from the push cache - honest count)
   firstSync: boolean; // no memory chosen / not signed in yet - nothing to preview
 }
 
-// The post-sign-in sync popup: on the couch channel the incoming count is only known after a
-// pull, so we show the honest outgoing figure (local files whose content differs from what was
-// last pushed - EVERY md file on a fresh memory) then run the live sync and report the result.
-// Informational + non-blocking (the sync auto-starts).
+// The post-sign-in sync popup: shows what the next sync will move, then runs the sync and
+// reports the result. Git memories show both directions; couch memories show only the honest
+// outgoing count. Informational + non-blocking (the sync auto-starts).
 class SyncPreviewModal extends Modal {
   constructor(
     app: App,
@@ -37,10 +37,12 @@ class SyncPreviewModal extends Modal {
     if (p.firstSync) {
       counts.createDiv({ text: '⟳ First sync - setting up your memory.' });
     } else {
-      counts.createDiv({ text: `↑ ${p.pending} local change(s) to send (to cloud)` });
+      if (p.incoming !== undefined)
+        counts.createDiv({ text: `↓ ${p.incoming} file(s) to receive (from cloud)` });
+      counts.createDiv({ text: `↑ ${p.outgoing} file(s) to send (to cloud)` });
     }
 
-    const statusEl = contentEl.createEl('p', { text: 'Syncing…' });
+    const statusEl = contentEl.createEl('p', { text: 'Syncing both ways…' });
     try {
       const r = await this.runSync();
       statusEl.setText(r.message);
