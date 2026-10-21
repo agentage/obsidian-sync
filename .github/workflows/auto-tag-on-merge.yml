@@ -1,0 +1,39 @@
+name: Auto-tag Release
+
+# A chore(release) PR merged to master (manifest.json changed) -> push the bare
+# tag <manifest version> and dispatch release.yml (a GITHUB_TOKEN tag push fires
+# no tag trigger). Obsidian requires tag == manifest.json version, no v prefix.
+on:
+  push:
+    branches: [master]
+    paths: ['manifest.json']
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Tag the release commit
+        id: tag
+        run: |
+          set -euo pipefail
+          MSG=$(git log -1 --pretty=%s)
+          echo "$MSG" | grep -qE '^chore\(release\): |^Merge pull request .* release/' || { echo "Not a release commit."; exit 0; }
+          V=$(node -p "require('./manifest.json').version")
+          git rev-parse -q --verify "refs/tags/${V}" >/dev/null && { echo "Tag ${V} exists."; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${V}" && git push origin "${V}"
+          echo "tagged=true" >> "$GITHUB_OUTPUT"
+      - name: Dispatch release.yml
+        if: steps.tag.outputs.tagged == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run release.yml --ref master -R "${{ github.repository }}" -f build_current=true

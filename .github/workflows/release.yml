@@ -143,8 +143,9 @@ jobs:
       - name: Tag merged commit
         if: steps.ver.outputs.release == 'true' && github.event_name != 'push'
         run: |
-          git tag "${{ steps.ver.outputs.tag }}"
-          git push origin "${{ steps.ver.outputs.tag }}"
+          T="${{ steps.ver.outputs.tag }}"
+          # build_current path: auto-tag-on-merge.yml already pushed the tag
+          git rev-parse -q --verify "refs/tags/$T" >/dev/null || { git tag "$T"; git push origin "$T"; }
 
       - name: Verify tag matches manifest version
         if: steps.ver.outputs.release == 'true'
