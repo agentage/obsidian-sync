@@ -4,6 +4,23 @@ The plugin ships as a GitHub Release with three assets — `main.js`, `manifest.
 `styles.css` — on a tag equal to `manifest.json`'s `version` (Obsidian requires
 tag == manifest version). `.github/workflows/release.yml` builds and publishes it.
 
+## Release train (default)
+
+Friday train v3 (canon: vault `playbooks/friday-release-train.md`). No cron in this repo,
+no direct push to `master`.
+
+1. **`prepare-release.yml`** (`workflow_dispatch`, input `bump` = auto/patch/minor/major;
+   dispatched by agentage/automation on Fridays or by hand). Skips if a `release/*` PR is
+   open or nothing releasable landed since the last bare tag; otherwise bumps
+   `package.json` + `manifest.json` + `versions.json` and opens PR
+   `chore(release): X.Y.Z` with auto-merge armed (authored with `PAT_TOKEN`, so the CI
+   gate runs on it).
+2. **`auto-tag-on-merge.yml`** tags the merged `chore(release):` commit with bare
+   `X.Y.Z` and dispatches `release.yml -f build_current=true`.
+3. **`release.yml`** (build_current) builds and publishes the three assets on that tag.
+
+Release any day: `gh workflow run prepare-release.yml -R agentage/obsidian-sync -f bump=minor`.
+
 ## One-time setup
 
 - **`RELEASE_PAT` secret** (required for the auto-bump path). A fine-grained PAT
