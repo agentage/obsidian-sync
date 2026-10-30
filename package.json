@@ -40,7 +40,7 @@
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.6.5",
-    "@typescript-eslint/eslint-plugin": "^8.72.0",
+    "@typescript-eslint/eslint-plugin": "^8.72.1",
     "@typescript-eslint/parser": "^8.69.0",
     "@vitest/coverage-v8": "^5.0.5",
     "builtin-modules": "^5.4.0",
@@ -57,7 +57,7 @@
   },
   "dependencies": {
     "diff3": "^0.0.4",
-    "isomorphic-git": "1.44.3",
+    "isomorphic-git": "1.44.5",
     "js-yaml": "^5.5.0"
   }
 }
