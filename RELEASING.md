@@ -23,7 +23,7 @@ Release any day: `gh workflow run prepare-release.yml -R agentage/obsidian-sync 
 
 ## One-time setup
 
-- **`RELEASE_PAT` secret** (required for the auto-bump path). A fine-grained PAT
+- **`PAT_TOKEN` secret** (used by `prepare-release.yml`) and **`RELEASE_PAT` secret** (used by the manual `release.yml` auto-bump path). A fine-grained PAT
   or GitHub App token with **contents: write** + **pull-requests: write**. The
   auto-bump opens a PR to land the version bump (the `master-protection` ruleset
   blocks direct pushes); a PR opened with the default `GITHUB_TOKEN` does **not**
