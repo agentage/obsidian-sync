@@ -59,5 +59,10 @@
     "diff3": "^0.0.4",
     "isomorphic-git": "1.44.12",
     "js-yaml": "^5.5.0"
+  },
+  "overrides": {
+    "eslint-plugin-n": {
+      "minimatch": "^11.0.1"
+    }
   }
 }
