@@ -40,9 +40,9 @@
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.6.6",
-    "@typescript-eslint/eslint-plugin": "^8.72.2",
-    "@typescript-eslint/parser": "^8.69.0",
-    "@vitest/coverage-v8": "^5.1.0",
+    "@typescript-eslint/eslint-plugin": "^8.74.0",
+    "@typescript-eslint/parser": "^8.74.0",
+    "@vitest/coverage-v8": "^5.1.1",
     "builtin-modules": "^5.5.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.14.0",
@@ -57,7 +57,7 @@
   },
   "dependencies": {
     "diff3": "^0.0.4",
-    "isomorphic-git": "1.44.16",
+    "isomorphic-git": "1.44.19",
     "js-yaml": "^5.5.0"
   },
   "overrides": {
